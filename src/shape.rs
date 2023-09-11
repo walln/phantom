@@ -1,7 +1,9 @@
 use crate::{Error, Result};
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct Shape(pub(crate) Vec<usize>);
+pub struct Shape(Vec<usize>);
+
+pub const SCALAR: Shape = Shape(vec![]);
 
 impl From<()> for Shape {
     fn from(_: ()) -> Self {
@@ -21,6 +23,12 @@ impl From<(usize, usize)> for Shape {
     }
 }
 
+impl From<(usize, usize, usize)> for Shape {
+    fn from((dim_0, dim_1, dim_2): (usize, usize, usize)) -> Self {
+        Self(vec![dim_0, dim_1, dim_2])
+    }
+}
+
 impl From<&[usize; 1]> for Shape {
     fn from(dims: &[usize; 1]) -> Self {
         Self(dims.to_vec())
@@ -29,6 +37,12 @@ impl From<&[usize; 1]> for Shape {
 
 impl From<&[usize; 2]> for Shape {
     fn from(dims: &[usize; 2]) -> Self {
+        Self(dims.to_vec())
+    }
+}
+
+impl From<&[usize; 3]> for Shape {
+    fn from(dims: &[usize; 3]) -> Self {
         Self(dims.to_vec())
     }
 }
@@ -42,6 +56,12 @@ impl From<&[usize]> for Shape {
 impl From<&Shape> for Shape {
     fn from(shape: &Shape) -> Self {
         Self(shape.0.to_vec())
+    }
+}
+
+impl From<Vec<usize>> for Shape {
+    fn from(dims: Vec<usize>) -> Self {
+        Self(dims)
     }
 }
 
@@ -74,6 +94,10 @@ impl Shape {
         &self.0
     }
 
+    pub fn into_dims(self) -> Vec<usize> {
+        self.0
+    }
+
     pub fn elem_count(&self) -> usize {
         self.0.iter().product()
     }
@@ -85,6 +109,12 @@ impl Shape {
         2,
         |dims: &[usize]| (dims[0], dims[1]),
         (usize, usize)
+    );
+    get_rank!(
+        rank_three,
+        3,
+        |dims: &[usize]| (dims[0], dims[1], dims[2]),
+        (usize, usize, usize)
     );
 
     /// Stride over a contiguous n-dimensional array of this shape
@@ -103,10 +133,49 @@ impl Shape {
         stride.reverse();
         stride
     }
+
+    /// Returns true if the shape is contiguous with the given stride
+    /// (i.e. no padding between dimensions) in a Row-Major order.
+    pub fn is_contiguous(&self, stride: &[usize]) -> bool {
+        if self.0.len() != stride.len() {
+            return false;
+        }
+
+        let mut accumulator = 1;
+        for (&stride, &dim) in stride.iter().zip(self.0.iter()).rev() {
+            if stride != accumulator {
+                return false;
+            }
+            accumulator *= dim;
+        }
+        true
+    }
+
+    pub fn extend(mut self, additional_dims: &[usize]) -> Self {
+        self.0.extend(additional_dims);
+        self
+    }
 }
 
 impl std::fmt::Debug for Shape {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", &self.dims())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stride() {
+        let shape = Shape::from(());
+        assert_eq!(shape.stride_contiguous(), Vec::<usize>::new());
+        let shape = Shape::from(42);
+        assert_eq!(shape.stride_contiguous(), [1]);
+        let shape = Shape::from((42, 1337));
+        assert_eq!(shape.stride_contiguous(), [1337, 1]);
+        let shape = Shape::from((299, 792, 458));
+        assert_eq!(shape.stride_contiguous(), [458 * 792, 458, 1]);
     }
 }

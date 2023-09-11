@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use crate::device::{Device, NDArray};
 use crate::index::StridedIndex;
-use crate::storage::Storage;
+use crate::operation::Operation;
+use crate::storage::{self, Storage};
 use crate::WithDType;
-use crate::{DType, Error, Operation, Result, Shape};
+use crate::{DType, Error, Layout, Result, Shape};
 
 /// Allow each tensor to be uniquely idenified. This makes it cheap to compute if
 /// a given tensor is a reference to the same underlying data as another tensor.
@@ -21,10 +22,8 @@ impl TensorID {
 
 pub struct Tensor_ {
     id: TensorID,
-    storage: Storage,
-    shape: Shape,
-    /// Element-wise stride rather than byte-wise stride
-    stride: Vec<usize>,
+    storage: Arc<Storage>,
+    layout: Layout,
     op: Option<Operation>,
     variable: bool,
 }
@@ -50,204 +49,187 @@ impl std::fmt::Debug for Tensor {
 }
 
 macro_rules! binary_operation {
-    ($fn_name:ident, $operation_name:ident, $storage_operation:ident) => {
+    ($fn_name:ident, $operation_name:ident) => {
         pub fn $fn_name(&self, rhs: &Self) -> Result<Self> {
             let shape = self.binary_operation_shape_matches(rhs, stringify!($fn_name))?;
-            let storage = self.storage.$storage_operation(
-                &rhs.storage,
-                shape,
-                self.stride(),
-                rhs.stride(),
-            )?;
-            let t = Tensor_ {
-                id: TensorID::new(),
-                storage,
-                shape: shape.clone(),
-                stride: shape.stride_contiguous(),
-                op: Some(Operation::$operation_name(self.clone(), rhs.clone())),
-                variable: false,
+            let storage = self
+                .storage
+                .binary_operation::<crate::operation::$operation_name>(
+                    &rhs.storage,
+                    self.layout(),
+                    rhs.layout(),
+                )?;
+            let op = if self.track_op() || rhs.track_op() {
+                Some(Operation::$operation_name(self.clone(), rhs.clone()))
+            } else {
+                None
             };
-            Ok(Self(Arc::new(t)))
+            Ok(from_storage(storage, shape.clone(), op, false))
         }
     };
 }
 
 macro_rules! unary_operation {
-    ($fn_name:ident, $operation_name:ident, $storage_operation:ident) => {
+    ($fn_name:ident, $operation_name:ident) => {
         pub fn $fn_name(&self) -> Result<Self> {
             let shape = self.shape();
-            let storage = self.storage.$storage_operation(shape, self.stride())?;
-            let t = Tensor_ {
-                id: TensorID::new(),
-                storage,
-                shape: shape.clone(),
-                stride: shape.stride_contiguous(),
-                op: Some(Operation::$operation_name(self.clone())),
-                variable: false,
+            let storage = self
+                .storage
+                .unary_operation::<crate::operation::$operation_name>(self.layout())?;
+            let op = if self.track_op() {
+                Some(Operation::$operation_name(self.clone()))
+            } else {
+                None
             };
-            Ok(Self(Arc::new(t)))
+            Ok(from_storage(storage, shape.clone(), op, false))
         }
     };
 }
 
 impl Tensor {
-    pub(crate) fn new_impl<A: NDArray>(array: A, device: Device, variable: bool) -> Result<Self> {
-        let shape: Shape = array.shape()?;
-        let storage: Storage = device.tensor(array);
-        let stride: Vec<usize> = shape.stride_contiguous();
-        let id: TensorID = TensorID::new();
-
-        let t: Tensor_ = Tensor_ {
-            id,
-            storage,
-            shape,
-            stride,
-            op: None,
-            variable,
-        };
-        Ok(Self(Arc::new(t)))
+    pub(crate) fn new_impl<A: NDArray>(
+        array: A,
+        shape: Shape,
+        device: &Device,
+        variable: bool,
+    ) -> Result<Self> {
+        let n: usize = shape.elem_count();
+        let buffer_size: usize = array.shape()?.elem_count();
+        if buffer_size != n {
+            return Err(Error::ShapeMismatch { buffer_size, shape });
+        }
+        let storage = device.storage(array)?;
+        Ok(from_storage(storage, shape, None, variable))
     }
 
     /// Creates a new tensor from a slice of data.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
+    /// let tensor = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], &Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[6]));
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn new<A: NDArray>(array: A, device: Device) -> Result<Self> {
-        Self::new_impl(array, device, false)
+    pub fn new<A: NDArray>(array: A, device: &Device) -> Result<Self> {
+        let shape = array.shape()?;
+        Self::new_impl(array, shape, device, false)
     }
 
     /// Creates a new variable tensor from a slice of data.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::var(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
-    /// assert_eq!(tensor.variable(), true);
+    /// let tensor = Tensor::var(&[0f32, 1., 2., 3., 4., 5.], &Device::CPU)?;
+    /// assert_eq!(tensor.is_variable(), true);
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn var<A: NDArray>(array: A, device: Device) -> Result<Self> {
-        Self::new_impl(array, device, true)
+    pub fn var<A: NDArray>(array: A, device: &Device) -> Result<Self> {
+        let shape = array.shape()?;
+        Self::new_impl(array, shape, device, true)
     }
 
     pub(crate) fn zeros_impl<S: Into<Shape>>(
         shape: S,
         dtype: DType,
-        device: Device,
+        device: &Device,
         variable: bool,
-    ) -> Self {
-        let shape = shape.into();
-        let storage = device.zeros(&shape, dtype);
-        let stride = shape.stride_contiguous();
-        let id: TensorID = TensorID::new();
-
-        let t = Tensor_ {
-            id,
-            storage,
-            shape,
-            stride,
-            op: None,
-            variable,
-        };
-
-        Tensor(Arc::new(t))
+    ) -> Result<Self> {
+        if variable {
+            let shape = shape.into();
+            let storage = device.zeros(&shape, dtype)?;
+            Ok(from_storage(storage, shape, None, variable))
+        } else {
+            let storage = device.zeros(&crate::shape::SCALAR, dtype)?;
+            from_storage(storage, crate::shape::SCALAR, None, variable).broadcast_as(shape)
+        }
     }
 
     /// Creates a new tensor of zeros with the given shape and data type.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::zeros(&[2, 2], phantom::DType::F32, Device::CPU);
+    /// let tensor = Tensor::zeros(&[2, 2], phantom::DType::F32, &Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn zeros<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
+    pub fn zeros<S: Into<Shape>>(shape: S, dtype: DType, device: &Device) -> Result<Self> {
         Self::zeros_impl(shape, dtype, device, false)
     }
 
     /// Creates a new variable tensor of zeros in the same shape and data type as the input tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
-    /// let zeros = tensor.zeros_like();
+    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
+    /// let zeros = tensor.zeros_like()?;
     /// assert_eq!(zeros.shape(), tensor.shape());
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn zeros_like(&self) -> Self {
-        Tensor::zeros(self.shape(), self.dtype(), self.device())
+    pub fn zeros_like(&self) -> Result<Self> {
+        Tensor::zeros(self.shape(), self.dtype(), &self.device())
     }
 
     /// Creates a new variable tensor of zeros with the given shape and data type.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::zeros_var(&[2, 2], phantom::DType::F32, Device::CPU);
-    /// assert_eq!(tensor.variable(), true);
+    /// let tensor = Tensor::zeros_var(&[2, 2], phantom::DType::F32, &Device::CPU)?;
+    /// assert_eq!(tensor.is_variable(), true);
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn zeros_var<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
+    pub fn zeros_var<S: Into<Shape>>(shape: S, dtype: DType, device: &Device) -> Result<Self> {
         Self::zeros_impl(shape, dtype, device, true)
     }
 
     pub fn ones_impl<S: Into<Shape>>(
         shape: S,
         dtype: DType,
-        device: Device,
+        device: &Device,
         variable: bool,
-    ) -> Self {
-        let shape = shape.into();
-        let storage = device.ones(&shape, dtype);
-        let stride = shape.stride_contiguous();
-        let id: TensorID = TensorID::new();
-
-        let t = Tensor_ {
-            id,
-            storage,
-            shape,
-            stride,
-            op: None,
-            variable,
-        };
-
-        Tensor(Arc::new(t))
+    ) -> Result<Self> {
+        if variable {
+            let shape = shape.into();
+            let storage = device.ones(&shape, dtype)?;
+            Ok(from_storage(storage, shape, None, variable))
+        } else {
+            let storage = device.ones(&crate::shape::SCALAR, dtype)?;
+            from_storage(storage, crate::shape::SCALAR, None, variable).broadcast_as(shape)
+        }
     }
 
     /// Creates a new tensor of ones with the given shape and data type.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::ones(&[2, 2], phantom::DType::F32, Device::CPU);
+    /// let tensor = Tensor::ones(&[2, 2], phantom::DType::F32, &Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn ones<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
+    pub fn ones<S: Into<Shape>>(shape: S, dtype: DType, device: &Device) -> Result<Self> {
         Self::ones_impl(shape, dtype, device, false)
     }
 
     /// Creates a new variable tensor of ones in the same shape and data type as the input tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
-    /// let ones = tensor.ones_like();
+    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
+    /// let ones = tensor.ones_like()?;
     /// assert_eq!(ones.shape(), tensor.shape());
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn ones_like(&self) -> Self {
-        Tensor::ones(self.shape(), self.dtype(), self.device())
+    pub fn ones_like(&self) -> Result<Self> {
+        Tensor::ones(self.shape(), self.dtype(), &self.device())
     }
 
     /// Creates a new variable tensor of ones with the given shape and data type.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::ones_var(&[2, 2], phantom::DType::F32, Device::CPU);
-    /// assert_eq!(tensor.variable(), true);
+    /// let tensor = Tensor::ones_var(&[2, 2], phantom::DType::F32, &Device::CPU)?;
+    /// assert_eq!(tensor.is_variable(), true);
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn ones_var<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
+    pub fn ones_var<S: Into<Shape>>(shape: S, dtype: DType, device: &Device) -> Result<Self> {
         Self::ones_impl(shape, dtype, device, true)
     }
 
     /// Converts the tensor to a scalar if the tensor is rank 0.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(0f32, Device::CPU)?;
+    /// let tensor = Tensor::new(0f32, &Device::CPU)?;
     /// assert_eq!(tensor.to_scalar::<f32>()?, 0f32);
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -256,21 +238,25 @@ impl Tensor {
             return Err(Error::UnexpectedRank {
                 expected: 0,
                 actual: self.rank(),
-                shape: self.0.shape.clone(),
+                shape: self.shape().clone(),
             });
         }
-        match &self.0.storage {
-            Storage::CPU(storage) => {
-                let data = S::storage_slice(storage)?;
-                Ok(data[0])
-            }
+
+        let from_cpu = |cpu_storage: &crate::CPUStorage| {
+            let data = S::cpu_storage_slice(cpu_storage)?;
+            Ok::<_, Error>(data[self.layout().start_offset()])
+        };
+
+        match self.storage.as_ref() {
+            Storage::CPU(storage) => from_cpu(storage),
+            Storage::MPS(_) => todo!(),
         }
     }
 
     /// Returns the unique identifier for this tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
+    /// let tensor = Tensor::new(&[0f32], &Device::CPU)?;
     /// assert_eq!(tensor.id(), tensor.id());
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -281,7 +267,7 @@ impl Tensor {
     /// Returns the data type of this tensor used on the storage backend.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
+    /// let tensor = Tensor::new(&[0f32], &Device::CPU)?;
     /// assert_eq!(tensor.dtype(), phantom::DType::F32);
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -292,7 +278,7 @@ impl Tensor {
     /// Returns the device that this tensor is stored on.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
+    /// let tensor = Tensor::new(&[0f32], &Device::CPU)?;
     /// assert_eq!(tensor.device(), Device::CPU);
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -300,59 +286,64 @@ impl Tensor {
         self.storage.device()
     }
 
+    /// TODO: Docs
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     /// Returns the shape of the tensor.
     /// ```rust
     /// use phantom::{Tensor, Device, Shape};
-    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn shape(&self) -> &Shape {
-        &self.shape
+        &self.layout.shape()
     }
 
     /// Returns the rank of the tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(tensor.rank(), 2);
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn rank(&self) -> usize {
-        self.shape.rank()
+        self.layout.shape().rank()
     }
 
     /// Returns the dimension size for each axis of the tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(tensor.dims(), &[2, 2]);
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn dims(&self) -> &[usize] {
-        self.shape.dims()
+        self.layout.shape().dims()
     }
 
     /// Returns the total number of values in the tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(tensor.elem_count(), 4);
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn elem_count(&self) -> usize {
-        self.shape.elem_count()
+        self.layout.shape().elem_count()
     }
 
     /// Returns the element-wise stride of the tensor.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(tensor.stride(), &[2, 1]);
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn stride(&self) -> &[usize] {
-        &self.stride
+        &self.layout.stride()
     }
 
     /// Returns the operation that created this tensor.
@@ -360,14 +351,20 @@ impl Tensor {
         &self.op
     }
 
+    /// Returns true if the computation graph should track this operation or
+    /// if this is a variable or one of its dependencies is a variable.
+    pub(crate) fn track_op(&self) -> bool {
+        self.variable || self.op.is_some()
+    }
+
     /// Returns true if the tensor is a variable that is tracked during backpropagation.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
-    /// assert!(tensor.variable());
+    /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
+    /// assert!(tensor.is_variable());
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn variable(&self) -> bool {
+    pub fn is_variable(&self) -> bool {
         self.variable
     }
 
@@ -375,7 +372,7 @@ impl Tensor {
     /// the elements to be iterated over in lexicographic order.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let a = Tensor::new(&[[0f32], [2.]], Device::CPU)?;
+    /// let a = Tensor::new(&[[0f32], [2.]], &Device::CPU)?;
     /// let mut iter = a.strided_index();
     /// assert_eq!(iter.next(), Some(0));
     /// assert_eq!(iter.next(), Some(1));
@@ -383,20 +380,20 @@ impl Tensor {
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn strided_index(&self) -> StridedIndex {
-        StridedIndex::new(self.dims(), self.stride())
+        self.layout.strided_index()
     }
 
     /// Returns true if the tensor is contiguous in memory.
     /// ```rust
     /// use phantom::{Tensor, Device};
     /// // Contigious example
-    /// let a = Tensor::new(&[0f32], Device::CPU)?;
-    /// assert!(a.contiguous());
+    /// let a = Tensor::new(&[0f32], &Device::CPU)?;
+    /// assert!(a.is_contiguous());
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn contiguous(&self) -> bool {
+    pub fn is_contiguous(&self) -> bool {
         let mut accumulated_stride = 1;
-        for (&dim, &stride) in self.shape.dims().iter().zip(self.stride.iter()).rev() {
+        for (&dim, &stride) in self.shape().dims().iter().zip(self.stride().iter()).rev() {
             if stride != accumulated_stride {
                 return false;
             }
@@ -405,10 +402,27 @@ impl Tensor {
         true
     }
 
+    pub fn contiguous(&self) -> Result<Tensor> {
+        if self.is_contiguous() {
+            Ok(self.clone())
+        } else {
+            let shape = self.shape();
+            let mut storage = self.device().zeros(shape, self.dtype())?;
+            self.storage
+                .copy_strided_source(&mut storage, 0, self.layout())?;
+            Ok(from_storage(
+                storage,
+                shape.clone(),
+                None, // TODO
+                false,
+            ))
+        }
+    }
+
     /// Returns the contents of the rank 1 tensor as a vector.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let a = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
+    /// let a = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], &Device::CPU)?;
     /// assert_eq!(a.to_vector_rank_one::<f32>()?, &[0., 1., 2., 3., 4., 5.]);
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -420,26 +434,27 @@ impl Tensor {
                 shape: self.shape().clone(),
             });
         }
-        match &self.storage {
+        match &self.storage.as_ref() {
             Storage::CPU(cpu_storage) => {
-                let data = S::storage_slice(cpu_storage)?;
+                let data = S::cpu_storage_slice(cpu_storage)?;
                 Ok(self.strided_index().map(|i: usize| data[i]).collect())
             }
+            Storage::MPS(_) => todo!(),
         }
     }
 
     /// Returns the contents of the rank 2 tensor as a vector of vectors in row-major order.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.], [4., 5.]], Device::CPU)?;
+    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.], [4., 5.]], &Device::CPU)?;
     /// assert_eq!(a.to_vector_rank_two::<f32>()?, &[[0., 1.], [2., 3.], [4., 5.]]);
     /// # Ok::<(), phantom::Error>(())
     /// ```
     pub fn to_vector_rank_two<S: WithDType>(&self) -> Result<Vec<Vec<S>>> {
         let (dim_one, dim_two) = self.shape().rank_two()?;
-        match &self.storage {
+        match &self.storage.as_ref() {
             Storage::CPU(storage) => {
-                let data = S::storage_slice(storage)?;
+                let data = S::cpu_storage_slice(storage)?;
                 let mut rows = vec![];
                 let mut index = self.strided_index();
                 for _idx_row in 0..dim_one {
@@ -449,6 +464,7 @@ impl Tensor {
                 assert!(index.next().is_none());
                 Ok(rows)
             }
+            Storage::MPS(_) => todo!(),
         }
     }
 
@@ -456,8 +472,8 @@ impl Tensor {
     /// and the operation can be performed, returning the shape if successful.
     /// ```rust
     /// use phantom::{Tensor, Device};
-    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
-    /// let b = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
+    /// let b = Tensor::new(&[[0f32, 1.], [2., 3.]], &Device::CPU)?;
     /// assert_eq!(a.binary_operation_shape_matches(&b, "add")?, a.shape());
     /// # Ok::<(), phantom::Error>(())
     /// ```
@@ -488,40 +504,76 @@ impl Tensor {
     /// NOTE: This operation casts the input values to the appropriate type so some rounding might
     /// be performed if operating in mixed precision.
     ///
-    /// ```rust
-    /// use phantom::{Tensor, Device};
-    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
-    /// let a = a.affine(4., -2.)?;
-    /// assert_eq!(a.to_vector_rank_two::<f32>()?, &[[-2.0, 2.0], [6.0, 10.0]]);
-    /// # Ok::<(), phantom::Error>(())
-    /// ```
+    /// TODO: Add doctests
     pub fn affine(&self, mul: f64, add: f64) -> Result<Self> {
-        let shape = self.shape();
-        let storage = self.storage.affine(self.shape(), self.stride(), mul, add)?;
-
-        let t = Tensor_ {
-            id: TensorID::new(),
-            storage,
-            shape: shape.clone(),
-            stride: shape.stride_contiguous(),
-            op: Some(Operation::Affine {
+        let storage = self.storage.affine(self.layout(), mul, add)?;
+        let operation = if self.track_op() {
+            Some(Operation::Affine {
                 node: self.clone(),
                 mul,
                 add,
-            }),
-            variable: false,
+            })
+        } else {
+            None
         };
-        Ok(Self(Arc::new(t)))
+        Ok(from_storage(storage, self.shape(), operation, false))
     }
 
-    binary_operation!(add, Add, add);
-    binary_operation!(sub, Sub, sub);
-    binary_operation!(mul, Mul, mul);
-    binary_operation!(div, Div, div);
+    pub fn broadcast_as<S: Into<Shape>>(&self, shape: S) -> Result<Self> {
+        let operation = if self.track_op() {
+            Some(Operation::Broadcast(self.clone()))
+        } else {
+            None
+        };
 
-    unary_operation!(sqr, Sqr, sqr);
-    unary_operation!(sqrt, Sqrt, sqrt);
-    unary_operation!(neg, Neg, neg);
+        let tensor = Tensor_ {
+            id: TensorID::new(),
+            storage: self.storage.clone(),
+            layout: self.layout.broadcast_as(shape)?,
+            op: operation,
+            variable: false,
+        };
+
+        Ok(Tensor(Arc::new(tensor)))
+    }
+
+    // Shorthand for broadcast_as
+    pub fn expand<S: Into<Shape>>(&self, shape: S) -> Result<Self> {
+        self.broadcast_as(shape)
+    }
+
+    /// Returns a new tensor duplicating data from the original tensor. New dimensions are inserted
+    /// on the left.
+    pub fn broadcast_left<S: Into<Shape>>(&self, left_shape: S) -> Result<Self> {
+        let left_shape = left_shape.into();
+        let mut dims = left_shape.into_dims();
+        dims.extend(self.dims());
+        self.broadcast_as(dims)
+    }
+
+    pub fn to_dtype(&self, dtype: DType) -> Result<Self> {
+        if self.dtype() == dtype {
+            Ok(self.clone())
+        } else {
+            let shape = self.shape();
+            let storage = self.storage.to_dtype(&self.layout(), dtype)?;
+            let operation = if self.track_op() {
+                Some(Operation::ToDType(self.clone()))
+            } else {
+                None
+            };
+            Ok(from_storage(storage, shape.clone(), operation, false))
+        }
+    }
+
+    binary_operation!(add, Add);
+    binary_operation!(sub, Sub);
+    binary_operation!(mul, Mul);
+    binary_operation!(div, Div);
+
+    unary_operation!(sqr, Sqr);
+    unary_operation!(sqrt, Sqrt);
+    unary_operation!(neg, Neg);
 }
 
 /// Implement binary operations with operator shorthands.
@@ -581,3 +633,19 @@ binary_trait!(Add, add, |_| 1., |v| v);
 binary_trait!(Sub, sub, |_| 1., |v: f64| -v);
 binary_trait!(Mul, mul, |v| v, |_| 0.);
 binary_trait!(Div, div, |v| 1. / v, |_| 0.);
+
+fn from_storage<S: Into<Shape>>(
+    storage: Storage,
+    shape: S,
+    operation: Option<Operation>,
+    variable: bool,
+) -> Tensor {
+    let tensor = Tensor_ {
+        id: TensorID::new(),
+        storage: Arc::new(storage),
+        layout: Layout::contiguous(shape),
+        op: operation,
+        variable,
+    };
+    Tensor(Arc::new(tensor))
+}

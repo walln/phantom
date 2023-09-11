@@ -1,116 +1,24 @@
-use crate::backend::cpu_backend::CPUStorage;
-use crate::{DType, Device, Error, Result, Shape};
+use crate::backend::{backend::BackendStorage, CPUStorage, MPSStorage};
+use crate::operation::{BinaryOperation, UnaryOperation};
+use crate::{DType, Device, Error, Layout, Result};
 
 pub enum Storage {
     CPU(CPUStorage),
-}
-
-pub(crate) trait UnaryOperation {
-    const NAME: &'static str;
-    fn f32(value: f32) -> f32;
-    fn f64(value: f64) -> f64;
-}
-
-pub(crate) trait BinaryOperation {
-    const NAME: &'static str;
-    fn f32(lhs: f32, rhs: f32) -> f32;
-    fn f64(lhs: f64, rhs: f64) -> f64;
-}
-
-struct Add;
-
-impl BinaryOperation for Add {
-    const NAME: &'static str = "add";
-    fn f32(lhs: f32, rhs: f32) -> f32 {
-        lhs + rhs
-    }
-    fn f64(lhs: f64, rhs: f64) -> f64 {
-        lhs + rhs
-    }
-}
-
-struct Sub;
-
-impl BinaryOperation for Sub {
-    const NAME: &'static str = "sub";
-    fn f32(lhs: f32, rhs: f32) -> f32 {
-        lhs - rhs
-    }
-    fn f64(lhs: f64, rhs: f64) -> f64 {
-        lhs - rhs
-    }
-}
-
-struct Mul;
-
-impl BinaryOperation for Mul {
-    const NAME: &'static str = "mul";
-    fn f32(lhs: f32, rhs: f32) -> f32 {
-        lhs * rhs
-    }
-    fn f64(lhs: f64, rhs: f64) -> f64 {
-        lhs * rhs
-    }
-}
-
-struct Div;
-
-impl BinaryOperation for Div {
-    const NAME: &'static str = "div";
-    fn f32(lhs: f32, rhs: f32) -> f32 {
-        lhs / rhs
-    }
-    fn f64(lhs: f64, rhs: f64) -> f64 {
-        lhs / rhs
-    }
-}
-
-struct Sqr;
-
-impl UnaryOperation for Sqr {
-    const NAME: &'static str = "sqr";
-    fn f32(value: f32) -> f32 {
-        value * value
-    }
-    fn f64(value: f64) -> f64 {
-        value * value
-    }
-}
-
-struct Sqrt;
-
-impl UnaryOperation for Sqrt {
-    const NAME: &'static str = "sqrt";
-    fn f32(value: f32) -> f32 {
-        value.sqrt()
-    }
-    fn f64(value: f64) -> f64 {
-        value.sqrt()
-    }
-}
-
-struct Neg;
-
-impl UnaryOperation for Neg {
-    const NAME: &'static str = "neg";
-    fn f32(value: f32) -> f32 {
-        -value
-    }
-    fn f64(value: f64) -> f64 {
-        -value
-    }
+    MPS(MPSStorage),
 }
 
 impl Storage {
     pub fn device(&self) -> Device {
         match self {
             Storage::CPU { .. } => Device::CPU,
+            Storage::MPS { .. } => Device::MPS,
         }
     }
 
     pub fn dtype(&self) -> DType {
         match self {
             Storage::CPU(storage) => storage.dtype(),
+            Storage::MPS(storage) => storage.dtype(),
         }
     }
 
@@ -119,7 +27,11 @@ impl Storage {
         let rhs = rhs.device();
 
         if lhs != rhs {
-            Err(Error::BinaryOperationDeviceMismatch { lhs, rhs, op })
+            Err(Error::BinaryOperationDeviceMismatch {
+                lhs: lhs.location(),
+                rhs: rhs.location(),
+                op,
+            })
         } else {
             Ok(())
         }
@@ -136,21 +48,24 @@ impl Storage {
         }
     }
 
-    fn unary_operation<T: UnaryOperation>(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    pub(crate) fn unary_operation<T: UnaryOperation>(&self, layout: &Layout) -> Result<Self> {
         match self {
             Storage::CPU(storage) => {
-                let storage = storage.unary_impl::<T>(shape, stride)?;
+                let storage = storage.unary_operation::<T>(layout)?;
                 Ok(Self::CPU(storage))
+            }
+            Storage::MPS(storage) => {
+                let storage = storage.unary_operation::<T>(layout)?;
+                Ok(Self::MPS(storage))
             }
         }
     }
 
-    fn binary_operation<T: BinaryOperation>(
+    pub(crate) fn binary_operation<T: BinaryOperation>(
         &self,
         rhs: &Self,
-        shape: &Shape,
-        lhs_stride: &[usize],
-        rhs_stride: &[usize],
+        lhs_layout: &Layout,
+        rhs_layout: &Layout,
     ) -> Result<Self> {
         // Check the operands are valid for this operation.
         self.matches_device(rhs, T::NAME)?;
@@ -159,76 +74,66 @@ impl Storage {
         // This will need contiguous layout optimizations later
         match (self, rhs) {
             (Storage::CPU(lhs), Storage::CPU(rhs)) => {
-                let storage = lhs.binary_operation::<T>(rhs, shape, lhs_stride, rhs_stride)?;
+                let storage = lhs.binary_operation::<T>(rhs, lhs_layout, rhs_layout)?;
                 Ok(Self::CPU(storage))
             }
+            (Storage::MPS(lhs), Storage::MPS(rhs)) => {
+                let storage = lhs.binary_operation::<T>(rhs, lhs_layout, rhs_layout)?;
+                Ok(Self::MPS(storage))
+            }
+            (_, _) => Err(Error::BinaryOperationDeviceMismatch {
+                lhs: self.device().location(),
+                rhs: rhs.device().location(),
+                op: T::NAME,
+            }),
         }
     }
 
-    pub(crate) fn add(
-        &self,
-        rhs: &Self,
-        shape: &Shape,
-        lhs_stride: &[usize],
-        rhs_stride: &[usize],
-    ) -> Result<Self> {
-        self.binary_operation::<Add>(rhs, shape, lhs_stride, rhs_stride)
-    }
-
-    pub(crate) fn sub(
-        &self,
-        rhs: &Self,
-        shape: &Shape,
-        lhs_stride: &[usize],
-        rhs_stride: &[usize],
-    ) -> Result<Self> {
-        self.binary_operation::<Sub>(rhs, shape, lhs_stride, rhs_stride)
-    }
-
-    pub(crate) fn mul(
-        &self,
-        rhs: &Self,
-        shape: &Shape,
-        lhs_stride: &[usize],
-        rhs_stride: &[usize],
-    ) -> Result<Self> {
-        self.binary_operation::<Mul>(rhs, shape, lhs_stride, rhs_stride)
-    }
-
-    pub(crate) fn div(
-        &self,
-        rhs: &Self,
-        shape: &Shape,
-        lhs_stride: &[usize],
-        rhs_stride: &[usize],
-    ) -> Result<Self> {
-        self.binary_operation::<Div>(rhs, shape, lhs_stride, rhs_stride)
-    }
-
-    pub(crate) fn affine(
-        &self,
-        shape: &Shape,
-        stride: &[usize],
-        mul: f64,
-        add: f64,
-    ) -> Result<Self> {
+    pub(crate) fn affine(&self, layout: &Layout, mul: f64, add: f64) -> Result<Self> {
         match self {
             Storage::CPU(storage) => {
-                let storage = storage.affine(shape, stride, mul, add)?;
+                let storage = storage.affine(layout, mul, add)?;
                 Ok(Self::CPU(storage))
+            }
+            Storage::MPS(storage) => {
+                let storage = storage.affine(layout, mul, add)?;
+                Ok(Self::MPS(storage))
             }
         }
     }
 
-    pub(crate) fn sqr(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
-        self.unary_operation::<Sqr>(shape, stride)
+    pub(crate) fn to_dtype(&self, layout: &Layout, dtype: DType) -> Result<Self> {
+        match self {
+            Storage::CPU(storage) => {
+                let storage = storage.to_dtype(layout, dtype)?;
+                Ok(Self::CPU(storage))
+            }
+            Storage::MPS(storage) => {
+                let storage = storage.to_dtype(layout, dtype)?;
+                Ok(Self::MPS(storage))
+            }
+        }
     }
 
-    pub(crate) fn sqrt(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
-        self.unary_operation::<Sqrt>(shape, stride)
-    }
-
-    pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
-        self.unary_operation::<Neg>(shape, stride)
+    /// The source is stridable and the destination is contiguous.
+    pub(crate) fn copy_strided_source(
+        &self,
+        destination: &mut Self,
+        destination_offset: usize,
+        source_layout: &Layout,
+    ) -> Result<()> {
+        match (self, destination) {
+            (Self::CPU(source), Self::CPU(destination)) => {
+                source.copy_strided_source(destination, destination_offset, source_layout)
+            }
+            (Self::MPS(source), Self::MPS(destination)) => {
+                source.copy_strided_source(destination, destination_offset, source_layout)
+            }
+            (lhs, rhs) => Err(Error::BinaryOperationDeviceMismatch {
+                lhs: lhs.device().location(),
+                rhs: rhs.device().location(),
+                op: "copy",
+            }),
+        }
     }
 }
