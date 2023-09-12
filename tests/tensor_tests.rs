@@ -240,5 +240,23 @@ fn matmul() -> Result<()> {
         &[[7.0f32, 10.0], [15.0, 22.0]]
     );
 
+    let data = vec![1.0f32, 2.0];
+    let a = Tensor::from_slice(&data, (2, 1), device)?;
+    let data = vec![3.0f32, 4.0];
+    let b = Tensor::from_slice(&data, (1, 2), device)?;
+    let c = a.matmul(&b)?;
+    assert_eq!(c.to_vector_rank_two::<f32>()?, &[&[3.0, 4.0], &[6.0, 8.0]]);
+
+    let data: Vec<_> = (0..6).map(|i| i as f32).collect();
+    let a = Tensor::from_slice(&data, (2, 3), device)?;
+    let data: Vec<_> = (0..6).map(|i| (i + 2) as f32).collect();
+    let b = Tensor::from_slice(&data, (3, 2), device)?;
+    let c = a.matmul(&b)?;
+    assert_eq!(c.to_vector_rank_two::<f32>()?, &[&[16., 19.], &[52., 64.]]);
+
+    // TODO: test matmul with broadcasting
+    // TODO: tests with higher ranks
+    // TODO: tests on contigious transposed tensors
+
     Ok(())
 }
