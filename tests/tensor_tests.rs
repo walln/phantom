@@ -225,3 +225,20 @@ fn binary_chaining() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn matmul() -> Result<()> {
+    let device = &Device::CPU;
+    let data = vec![1.0f32, 2.0, 3.0, 4.0];
+    let a = Tensor::from_slice(&data, (2, 2), device)?;
+    let data = vec![1.0f32, 2.0, 3.0, 4.0];
+    let b = Tensor::from_slice(&data, (2, 2), device)?;
+
+    let c = a.matmul(&b)?;
+    assert_eq!(
+        c.to_vector_rank_two::<f32>()?,
+        &[[7.0f32, 10.0], [15.0, 22.0]]
+    );
+
+    Ok(())
+}

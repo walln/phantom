@@ -3,11 +3,19 @@ use crate::{DType, Layout, Shape};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    // TODO: consider renaming to unexpected dims despite the fact that rank is more accurate
     #[error("unexpected rank, expected: {expected}, actual: {actual}")]
     UnexpectedRank {
         expected: usize,
         actual: usize,
         shape: Shape,
+    },
+
+    #[error("{op}: dimension index {dim} out of range for shape {shape:?}")]
+    DimOutOfRange {
+        shape: Shape,
+        dim: i32,
+        op: &'static str,
     },
 
     #[error("unexpected dtype, expected: {expected:?}, actual: {actual:?}")]
@@ -63,6 +71,37 @@ pub enum Error {
 
     #[error("unsupported dtype {dtype:?} for {op}")]
     UnsupportedDTypeForOperation { dtype: DType, op: &'static str },
+
+    #[error("{inner}\n{backtrace}")]
+    WithBacktrace {
+        inner: Box<Self>,
+        backtrace: Box<std::backtrace::Backtrace>,
+    },
+
+    /// User generated error message, typically created via `bail!`.
+    #[error("{0}")]
+    Message(String),
+}
+
+impl Error {
+    pub fn backtrace(self) -> Self {
+        let backtrace = std::backtrace::Backtrace::capture();
+        match backtrace.status() {
+            std::backtrace::BacktraceStatus::Disabled
+            | std::backtrace::BacktraceStatus::Unsupported => self,
+            _ => Self::WithBacktrace {
+                inner: Box::new(self),
+                backtrace: Box::new(backtrace),
+            },
+        }
+    }
+
+    pub fn message<T>(err: T) -> Self
+    where
+        T: std::error::Error + Send + Sync + 'static,
+    {
+        Self::Message(err.to_string()).backtrace()
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

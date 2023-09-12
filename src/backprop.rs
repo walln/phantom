@@ -1,5 +1,5 @@
 use crate::gradient_store::GradientStore;
-use crate::operation::Operation;
+use crate::operation::{BinaryOperations, Operation, UnaryOperations};
 use crate::tensor::{Tensor, TensorID};
 use crate::Error;
 use crate::Result;
@@ -26,21 +26,11 @@ impl Tensor {
                 nodes
             } else if let Some(op) = node.op() {
                 match op {
-                    Operation::Add(lhs, rhs)
-                    | Operation::Sub(lhs, rhs)
-                    | Operation::Mul(lhs, rhs)
-                    | Operation::Div(lhs, rhs) => {
-                        let (target, nodes) = walk(lhs, nodes, seen);
-                        tracked |= target;
-                        let (target, nodes) = walk(rhs, nodes, seen);
-                        tracked |= target;
-                        nodes
-                    }
-                    Operation::Sqr(node)
-                    | Operation::Sqrt(node)
-                    | Operation::Neg(node)
-                    | Operation::Broadcast(node)
-                    | Operation::ToDType(node) => {
+                    Operation::Broadcast(node)
+                    | Operation::ToDType(node)
+                    | Operation::Transpose(node, _, _)
+                    | Operation::Copy(node)
+                    | Operation::Unary(node, _) => {
                         let (target, nodes) = walk(node, nodes, seen);
                         tracked |= target;
                         nodes
@@ -53,6 +43,14 @@ impl Tensor {
                             tracked |= target;
                             nodes
                         }
+                    }
+
+                    Operation::Binary(lhs, rhs, _) | Operation::Matmul(lhs, rhs) => {
+                        let (target, nodes) = walk(lhs, nodes, seen);
+                        tracked |= target;
+                        let (target, nodes) = walk(rhs, nodes, seen);
+                        tracked |= target;
+                        nodes
                     }
                 }
             } else {
@@ -103,19 +101,19 @@ impl Tensor {
 
             if let Some(op) = node.op() {
                 match op {
-                    Operation::Add(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Add) => {
                         let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&gradient)?;
                         let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.add(&gradient)?;
                     }
-                    Operation::Sub(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Sub) => {
                         let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&gradient)?;
                         let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.sub(&gradient)?;
                     }
-                    Operation::Mul(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Mul) => {
                         let lhs_gradient = gradient.mul(rhs)?;
                         let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
@@ -123,7 +121,7 @@ impl Tensor {
                         let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
                     }
-                    Operation::Div(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Div) => {
                         let lhs_gradient = gradient.div(rhs)?;
                         let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
@@ -136,17 +134,17 @@ impl Tensor {
                         let gradient_sum = gradients.or_insert(arg)?;
                         *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Sqr(arg) => {
+                    Operation::Unary(arg, UnaryOperations::Sqr) => {
                         let gradient_arg = arg.mul(&gradient)?.affine(2., 0.)?;
                         let gradient_sum = gradients.or_insert(node)?;
                         *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Sqrt(arg) => {
+                    Operation::Unary(arg, UnaryOperations::Sqrt) => {
                         let gradient_arg = gradient.div(arg)?.affine(0.5, 0.)?;
                         let gradient_sum = gradients.or_insert(arg)?;
                         *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Neg(arg) => {
+                    Operation::Unary(arg, UnaryOperations::Neg) => {
                         let gradient_sum = gradients.or_insert(arg)?;
                         *gradient_sum = gradient_sum.sub(&gradient)?
                     }
@@ -158,6 +156,27 @@ impl Tensor {
                     Operation::ToDType(arg) => {
                         let gradient_sum = gradients.or_insert(arg)?;
                         *gradient_sum = gradient_sum.add(&gradient.to_dtype(node.dtype())?)?
+                    }
+                    Operation::Matmul(lhs, rhs) => {
+                        // Skipping checks, the op went ok, we can skip
+                        // the matmul size checks for now.
+
+                        let lhs_gradient = gradient.matmul(&rhs.t()?)?;
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
+                        *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
+
+                        let rhs_gradient = lhs.t()?.matmul(&gradient)?;
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
+                        *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
+                    }
+                    Operation::Transpose(arg, dim1, dim2) => {
+                        let gradient_arg = gradient.transpose(*dim1, *dim2)?;
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient_arg)?
+                    }
+                    Operation::Copy(arg) => {
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient)?
                     }
                 }
             }

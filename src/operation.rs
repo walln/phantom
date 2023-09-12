@@ -1,22 +1,32 @@
 use crate::Tensor;
 
-#[derive(Debug, Clone)]
-pub(crate) enum Operation {
-    // Binary Operations
-    Add(Tensor, Tensor),
-    Sub(Tensor, Tensor),
-    Mul(Tensor, Tensor),
-    Div(Tensor, Tensor),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinaryOperations {
+    Add,
+    Mul,
+    Sub,
+    Div,
+}
 
-    // Unary Operations
-    Sqr(Tensor),
-    Sqrt(Tensor),
-    Neg(Tensor),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOperations {
+    Sqr,
+    Sqrt,
+    Neg,
+}
+
+#[derive(Debug, Clone)]
+pub enum Operation {
+    Unary(Tensor, UnaryOperations),
+    Binary(Tensor, Tensor, BinaryOperations),
 
     // Casting and complex ops
     Affine { node: Tensor, mul: f64, add: f64 },
     Broadcast(Tensor),
+    Transpose(Tensor, usize, usize),
+    Matmul(Tensor, Tensor),
 
+    Copy(Tensor),
     ToDType(Tensor),
 }
 
@@ -98,3 +108,51 @@ macro_rules! unary_op {
 unary_op!(Sqr, "sqr", a, a * a);
 unary_op!(Sqrt, "sqrt", a, a.sqrt());
 unary_op!(Neg, "neg", a, -a);
+
+#[derive(Clone, Debug)]
+pub struct BackpropOperation(Option<Operation>);
+
+impl BackpropOperation {
+    pub(crate) fn none() -> Self {
+        BackpropOperation(None)
+    }
+
+    pub(crate) fn new<A: AsRef<Tensor>>(args: &[A], f: impl Fn(Vec<Tensor>) -> Operation) -> Self {
+        let operation = if args.iter().any(|arg| arg.as_ref().track_op()) {
+            let args: Vec<Tensor> = args.iter().map(|arg| arg.as_ref().clone()).collect();
+            Some(f(args))
+        } else {
+            None
+        };
+        Self(operation)
+    }
+
+    pub(crate) fn new_unary(arg: &Tensor, f: impl Fn(Tensor) -> Operation) -> Self {
+        let operation = if arg.track_op() {
+            Some(f(arg.clone()))
+        } else {
+            None
+        };
+        Self(operation)
+    }
+
+    pub(crate) fn new_binary(
+        arg1: &Tensor,
+        arg2: &Tensor,
+        f: impl Fn(Tensor, Tensor) -> Operation,
+    ) -> Self {
+        let operation = if arg1.track_op() || arg2.track_op() {
+            Some(f(arg1.clone(), arg2.clone()))
+        } else {
+            None
+        };
+        Self(operation)
+    }
+}
+
+impl std::ops::Deref for BackpropOperation {
+    type Target = Option<Operation>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}

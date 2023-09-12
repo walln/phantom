@@ -163,6 +163,26 @@ impl std::fmt::Debug for Shape {
     }
 }
 
+pub trait Dim {
+    fn to_index(&self, shape: &Shape, operation: &'static str) -> Result<usize>;
+}
+
+impl Dim for usize {
+    fn to_index(&self, shape: &Shape, op: &'static str) -> Result<usize> {
+        let dim = *self;
+        if dim >= shape.dims().len() {
+            Err(Error::DimOutOfRange {
+                shape: shape.clone(),
+                dim: dim as i32,
+                op,
+            }
+            .backtrace())?
+        } else {
+            Ok(dim)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

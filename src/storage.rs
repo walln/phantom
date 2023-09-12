@@ -102,6 +102,33 @@ impl Storage {
         }
     }
 
+    pub(crate) fn matmul(
+        &self,
+        rhs: &Self,
+        bmnk: (usize, usize, usize, usize),
+        lhs_layout: &Layout,
+        rhs_layout: &Layout,
+    ) -> Result<Self> {
+        self.matches_device(rhs, "matmul")?;
+        self.matches_dtype(rhs, "matmul")?;
+
+        match (self, rhs) {
+            (Self::CPU(lhs), Self::CPU(rhs)) => {
+                let storage = lhs.matmul(rhs, bmnk, lhs_layout, rhs_layout)?;
+                Ok(Self::CPU(storage))
+            }
+            (Self::MPS(lhs), Self::MPS(rhs)) => {
+                let storage = lhs.matmul(rhs, bmnk, lhs_layout, rhs_layout)?;
+                Ok(Self::MPS(storage))
+            }
+            (lhs, rhs) => Err(Error::BinaryOperationDeviceMismatch {
+                lhs: lhs.device().location(),
+                rhs: rhs.device().location(),
+                op: "matmul",
+            }),
+        }
+    }
+
     pub(crate) fn to_dtype(&self, layout: &Layout, dtype: DType) -> Result<Self> {
         match self {
             Storage::CPU(storage) => {
