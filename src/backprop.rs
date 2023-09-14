@@ -1,5 +1,7 @@
+use crate::gradient_store::GradientStore;
+use crate::operation::{BinaryOperations, Operation, UnaryOperations};
 use crate::tensor::{Tensor, TensorID};
-use crate::Operation;
+use crate::Error;
 use crate::Result;
 use std::collections::HashMap;
 
@@ -19,22 +21,16 @@ impl Tensor {
             }
 
             let mut tracked = false;
-            let mut nodes = if node.variable() {
+            let mut nodes = if node.is_variable() {
                 tracked = true;
                 nodes
             } else if let Some(op) = node.op() {
                 match op {
-                    Operation::Add(lhs, rhs)
-                    | Operation::Sub(lhs, rhs)
-                    | Operation::Mul(lhs, rhs)
-                    | Operation::Div(lhs, rhs) => {
-                        let (target, nodes) = walk(lhs, nodes, seen);
-                        tracked |= target;
-                        let (target, nodes) = walk(rhs, nodes, seen);
-                        tracked |= target;
-                        nodes
-                    }
-                    Operation::Sqr(node) | Operation::Sqrt(node) | Operation::Neg(node) => {
+                    Operation::Broadcast(node)
+                    | Operation::ToDType(node)
+                    | Operation::Transpose(node, _, _)
+                    | Operation::Copy(node)
+                    | Operation::Unary(node, _) => {
                         let (target, nodes) = walk(node, nodes, seen);
                         tracked |= target;
                         nodes
@@ -47,6 +43,14 @@ impl Tensor {
                             tracked |= target;
                             nodes
                         }
+                    }
+
+                    Operation::Binary(lhs, rhs, _) | Operation::Matmul(lhs, rhs) => {
+                        let (target, nodes) = walk(lhs, nodes, seen);
+                        tracked |= target;
+                        let (target, nodes) = walk(rhs, nodes, seen);
+                        tracked |= target;
+                        nodes
                     }
                 }
             } else {
@@ -74,100 +78,105 @@ impl Tensor {
     /// ```rust
     /// use phantom::{Tensor, Device};
     ///
-    /// let x = Tensor::new(&[[2f32, 2.], [1f32, 2.]], Device::CPU)?;
-    /// let y = Tensor::new(&[[2f32, 2.], [5f32, 6.]], Device::CPU)?;
+    /// let x = Tensor::new(&[[2f32, 2.], [1f32, 2.]], &Device::CPU)?;
+    /// let y = Tensor::new(&[[2f32, 2.], [5f32, 6.]], &Device::CPU)?;
     /// let z = x.add(&y)?;
     /// let gradients = z.backward()?;
     /// assert_eq!(gradients.len(), 1);
     ///
     /// # Ok::<(), phantom::Error>(())
     /// ```
-    pub fn backward(&self) -> Result<HashMap<TensorID, Tensor>> {
+    pub fn backward(&self) -> Result<GradientStore> {
         let sorted_nodes = self.sorted_nodes();
-        let mut gradients = HashMap::new();
+        let mut gradients = GradientStore::new();
 
-        gradients.insert(self.id(), self.ones_like());
+        gradients.insert(self, self.ones_like()?.contiguous()?);
 
         for node in sorted_nodes.iter() {
-            if node.variable() {
+            if node.is_variable() {
                 continue;
             }
 
-            let gradient = gradients.remove(&node.id()).unwrap();
+            let gradient = gradients.remove(node).unwrap();
 
             if let Some(op) = node.op() {
                 match op {
-                    Operation::Add(lhs, rhs) => {
-                        let lhs_gradient_sum = gradients
-                            .entry(lhs.id())
-                            .or_insert_with(|| lhs.zeros_like());
+                    Operation::Binary(lhs, rhs, BinaryOperations::Add) => {
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&gradient)?;
-                        let rhs_gradient_sum = gradients
-                            .entry(rhs.id())
-                            .or_insert_with(|| rhs.zeros_like());
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.add(&gradient)?;
                     }
-                    Operation::Sub(lhs, rhs) => {
-                        let lhs_gradient_sum = gradients
-                            .entry(lhs.id())
-                            .or_insert_with(|| lhs.zeros_like());
+                    Operation::Binary(lhs, rhs, BinaryOperations::Sub) => {
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&gradient)?;
-                        let rhs_gradient_sum = gradients
-                            .entry(rhs.id())
-                            .or_insert_with(|| rhs.zeros_like());
-                        *rhs_gradient_sum = rhs_gradient_sum.add(&gradient.neg()?)?;
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
+                        *rhs_gradient_sum = rhs_gradient_sum.sub(&gradient)?;
                     }
-                    Operation::Mul(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Mul) => {
                         let lhs_gradient = gradient.mul(rhs)?;
-                        let lhs_gradient_sum = gradients
-                            .entry(lhs.id())
-                            .or_insert_with(|| lhs.zeros_like());
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
                         let rhs_gradient = gradient.mul(lhs)?;
-                        let rhs_gradient_sum = gradients
-                            .entry(rhs.id())
-                            .or_insert_with(|| rhs.zeros_like());
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
                     }
-                    Operation::Div(lhs, rhs) => {
+                    Operation::Binary(lhs, rhs, BinaryOperations::Div) => {
                         let lhs_gradient = gradient.div(rhs)?;
-                        let lhs_gradient_sum = gradients
-                            .entry(lhs.id())
-                            .or_insert_with(|| lhs.zeros_like());
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
                         *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
                         let rhs_gradient = gradient.mul(lhs)?.div(&rhs.sqr()?)?;
-                        let rhs_gradient_sum = gradients
-                            .entry(rhs.id())
-                            .or_insert_with(|| rhs.zeros_like());
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
                         *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
                     }
-                    Operation::Affine { node, mul, .. } => {
-                        let node_gradient = gradient.affine(*mul, 0.)?;
-                        let gradient_sum = gradients
-                            .entry(node.id())
-                            .or_insert_with(|| node.zeros_like());
-                        *gradient_sum = gradient_sum.add(&node_gradient)?
+                    Operation::Affine { node: arg, mul, .. } => {
+                        let gradient_arg = gradient.affine(*mul, 0.)?;
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Sqr(node) => {
-                        let node_gradient = node.mul(&gradient)?.affine(2., 0.)?;
-                        let gradient_sum = gradients
-                            .entry(node.id())
-                            .or_insert_with(|| node.zeros_like());
-                        *gradient_sum = gradient_sum.add(&node_gradient)?
+                    Operation::Unary(arg, UnaryOperations::Sqr) => {
+                        let gradient_arg = arg.mul(&gradient)?.affine(2., 0.)?;
+                        let gradient_sum = gradients.or_insert(node)?;
+                        *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Sqrt(node) => {
-                        let node_gradient = gradient.div(node)?.affine(0.5, 0.)?;
-                        let gradient_sum = gradients
-                            .entry(node.id())
-                            .or_insert_with(|| node.zeros_like());
-                        *gradient_sum = gradient_sum.add(&node_gradient)?
+                    Operation::Unary(arg, UnaryOperations::Sqrt) => {
+                        let gradient_arg = gradient.div(arg)?.affine(0.5, 0.)?;
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient_arg)?
                     }
-                    Operation::Neg(node) => {
-                        let node_gradient = gradient.neg()?;
-                        let gradient_sum = gradients
-                            .entry(node.id())
-                            .or_insert_with(|| node.zeros_like());
-                        *gradient_sum = gradient_sum.add(&node_gradient)?
+                    Operation::Unary(arg, UnaryOperations::Neg) => {
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.sub(&gradient)?
+                    }
+                    Operation::Broadcast(_) => {
+                        return Err(Error::BackwardUnsupported {
+                            operation: "broadcast",
+                        })
+                    }
+                    Operation::ToDType(arg) => {
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient.to_dtype(node.dtype())?)?
+                    }
+                    Operation::Matmul(lhs, rhs) => {
+                        // Skipping checks, the op went ok, we can skip
+                        // the matmul size checks for now.
+
+                        let lhs_gradient = gradient.matmul(&rhs.t()?)?;
+                        let lhs_gradient_sum = gradients.or_insert(lhs)?;
+                        *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
+
+                        let rhs_gradient = lhs.t()?.matmul(&gradient)?;
+                        let rhs_gradient_sum = gradients.or_insert(rhs)?;
+                        *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
+                    }
+                    Operation::Transpose(arg, dim1, dim2) => {
+                        let gradient_arg = gradient.transpose(*dim1, *dim2)?;
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient_arg)?
+                    }
+                    Operation::Copy(arg) => {
+                        let gradient_sum = gradients.or_insert(arg)?;
+                        *gradient_sum = gradient_sum.add(&gradient)?
                     }
                 }
             }

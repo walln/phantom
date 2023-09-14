@@ -8,5 +8,12 @@ license = "MIT"
 readme = "README.md"
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = { version = "1.0.75", features = ["backtrace"]}
+num-traits = "0.2.16"
 thiserror = "1"
+
+# TODO: Switch back to the official gemm implementation once something similar to
+# https://github.com/sarah-ek/gemm/pull/8 is available.
+gemm = { git = "https://github.com/LaurentMazare/gemm.git", branch = "f16-vectorize-pack" }
+rand = "0.8.5"
+num_cpus = "1.16.0"
