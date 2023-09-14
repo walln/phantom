@@ -76,7 +76,7 @@ impl Tensor {
     /// The gradient of a node is the sum of the gradients of all the nodes that depend on it.
     /// The gradient of a node is computed by applying the chain rule to the node's operation.
     /// ```rust
-    /// use phantom::{Tensor, Device};
+    /// use phantom_core::{Tensor, Device};
     ///
     /// let x = Tensor::new(&[[2f32, 2.], [1f32, 2.]], &Device::CPU)?;
     /// let y = Tensor::new(&[[2f32, 2.], [5f32, 6.]], &Device::CPU)?;
@@ -84,7 +84,7 @@ impl Tensor {
     /// let gradients = z.backward()?;
     /// assert_eq!(gradients.len(), 1);
     ///
-    /// # Ok::<(), phantom::Error>(())
+    /// # Ok::<(), phantom_core::Error>(())
     /// ```
     pub fn backward(&self) -> Result<GradientStore> {
         let sorted_nodes = self.sorted_nodes();
