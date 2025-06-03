@@ -1,12 +1,9 @@
-[package]
-name = "phantom"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "crates/phantom-core",
+    "crates/phantom-layers"
+]
 
-description = "A forward mode autodiff and deep learning library for Rust"
-license = "MIT"
-readme = "README.md"
-
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.75"
 thiserror = "1"

@@ -1,4 +1,4 @@
-use phantom::{DType, Device, Result, Tensor};
+use phantom_core::{DType, Device, Result, Tensor};
 
 #[test]
 fn construct() -> Result<()> {

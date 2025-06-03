@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use phantom::{Device, Tensor};
+use phantom_core::{Device, Tensor};
 
 #[test]
 fn simple_grad() -> Result<()> {
