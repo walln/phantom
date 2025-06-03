@@ -514,6 +514,28 @@ impl Tensor {
         Ok(Self(Arc::new(t)))
     }
 
+    /// Reduces the tensor by summing all of its elements producing a scalar tensor.
+    /// ```rust
+    /// use phantom::{Tensor, Device};
+    /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
+    /// assert_eq!(a.sum()?.to_scalar::<f32>()?, 6.0);
+    /// # Ok::<(), phantom::Error>(())
+    /// ```
+    pub fn sum(&self) -> Result<Self> {
+        let shape = Shape::from(());
+        let storage = self.storage.sum(self.shape(), self.stride())?;
+
+        let t = Tensor_ {
+            id: TensorID::new(),
+            storage,
+            shape: shape.clone(),
+            stride: shape.stride_contiguous(),
+            op: Some(Operation::Sum(self.clone())),
+            variable: false,
+        };
+        Ok(Self(Arc::new(t)))
+    }
+
     binary_operation!(add, Add, add);
     binary_operation!(sub, Sub, sub);
     binary_operation!(mul, Mul, mul);

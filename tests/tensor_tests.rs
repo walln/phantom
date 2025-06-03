@@ -225,3 +225,12 @@ fn binary_chaining() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn sum_rank_two() -> Result<()> {
+    let a = Tensor::new(&[[1f32, 2.], [3., 4.]], Device::CPU)?;
+    let s = a.sum()?;
+    assert_eq!(s.rank(), 0);
+    assert_eq!(s.to_scalar::<f32>()?, 10.0);
+    Ok(())
+}

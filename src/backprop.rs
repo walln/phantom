@@ -1,6 +1,5 @@
 use crate::tensor::{Tensor, TensorID};
-use crate::Operation;
-use crate::Result;
+use crate::{Operation, Result, DType};
 use std::collections::HashMap;
 
 impl Tensor {
@@ -34,7 +33,10 @@ impl Tensor {
                         tracked |= target;
                         nodes
                     }
-                    Operation::Sqr(node) | Operation::Sqrt(node) | Operation::Neg(node) => {
+                    Operation::Sqr(node)
+                    | Operation::Sqrt(node)
+                    | Operation::Neg(node)
+                    | Operation::Sum(node) => {
                         let (target, nodes) = walk(node, nodes, seen);
                         tracked |= target;
                         nodes
@@ -164,6 +166,17 @@ impl Tensor {
                     }
                     Operation::Neg(node) => {
                         let node_gradient = gradient.neg()?;
+                        let gradient_sum = gradients
+                            .entry(node.id())
+                            .or_insert_with(|| node.zeros_like());
+                        *gradient_sum = gradient_sum.add(&node_gradient)?
+                    }
+                    Operation::Sum(node) => {
+                        let scalar = match node.dtype() {
+                            DType::F32 => gradient.to_scalar::<f32>()? as f64,
+                            DType::F64 => gradient.to_scalar::<f64>()?,
+                        };
+                        let node_gradient = node.zeros_like().affine(0., scalar)?;
                         let gradient_sum = gradients
                             .entry(node.id())
                             .or_insert_with(|| node.zeros_like());

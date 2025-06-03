@@ -231,4 +231,13 @@ impl Storage {
     pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
         self.unary_operation::<Neg>(shape, stride)
     }
+
+    pub(crate) fn sum(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+        match self {
+            Storage::CPU(storage) => {
+                let storage = storage.sum(shape, stride)?;
+                Ok(Self::CPU(storage))
+            }
+        }
+    }
 }

@@ -38,3 +38,15 @@ fn simple_grad_constants() -> Result<()> {
     assert_eq!(gradient_x.to_vector_rank_one::<f32>()?, [11., 7., 13.]);
     Ok(())
 }
+
+#[test]
+fn sum_gradient() -> Result<()> {
+    let x = Tensor::var(&[1f32, 2., 3.], Device::CPU)?;
+    let y = x.sum()?;
+    let gradients = y.backward()?;
+    let gradient_x = gradients.get(&x.id()).context("x has no gradient")?;
+
+    assert_eq!(y.to_scalar::<f32>()?, 6.0);
+    assert_eq!(gradient_x.to_vector_rank_one::<f32>()?, [1., 1., 1.]);
+    Ok(())
+}

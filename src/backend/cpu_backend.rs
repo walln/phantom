@@ -92,4 +92,19 @@ impl CPUStorage {
             }),
         }
     }
+
+    pub(crate) fn sum(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+        match self {
+            Self::F32(storage) => {
+                let index = StridedIndex::new(shape.dims(), stride);
+                let value: f32 = index.map(|i| storage[i]).sum();
+                Ok(Self::F32(vec![value]))
+            }
+            Self::F64(storage) => {
+                let index = StridedIndex::new(shape.dims(), stride);
+                let value: f64 = index.map(|i| storage[i]).sum();
+                Ok(Self::F64(vec![value]))
+            }
+        }
+    }
 }

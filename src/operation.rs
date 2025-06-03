@@ -10,5 +10,7 @@ pub enum Operation {
     Sqrt(Tensor),
     Neg(Tensor),
 
+    Sum(Tensor),
+
     Affine { node: Tensor, mul: f64, add: f64 },
 }
