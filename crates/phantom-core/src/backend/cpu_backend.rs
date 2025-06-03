@@ -92,4 +92,86 @@ impl CPUStorage {
             }),
         }
     }
+
+    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+        let (rows, cols) = shape.rank_two()?;
+        match self {
+            CPUStorage::F32(storage) => {
+                let mut out = vec![0f32; rows * cols];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let src = r * stride[0] + c * stride[1];
+                        out[c * rows + r] = storage[src];
+                    }
+                }
+                Ok(Self::F32(out))
+            }
+            CPUStorage::F64(storage) => {
+                let mut out = vec![0f64; rows * cols];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        let src = r * stride[0] + c * stride[1];
+                        out[c * rows + r] = storage[src];
+                    }
+                }
+                Ok(Self::F64(out))
+            }
+        }
+    }
+
+    pub(crate) fn matmul(
+        &self,
+        lhs_shape: (usize, usize),
+        lhs_stride: &[usize],
+        rhs: &Self,
+        rhs_shape: (usize, usize),
+        rhs_stride: &[usize],
+    ) -> Result<Self> {
+        let (m, k) = lhs_shape;
+        let (k_rhs, n) = rhs_shape;
+        if k != k_rhs {
+            return Err(Error::BinaryOperationShapeMismatch {
+                lhs: Shape::from((m, k)),
+                rhs: Shape::from((k_rhs, n)),
+                op: "matmul",
+            });
+        }
+        match (self, rhs) {
+            (CPUStorage::F32(lhs), CPUStorage::F32(rhs)) => {
+                let mut out = vec![0f32; m * n];
+                for i in 0..m {
+                    for j in 0..n {
+                        let mut sum = 0f32;
+                        for p in 0..k {
+                            let lhs_idx = i * lhs_stride[0] + p * lhs_stride[1];
+                            let rhs_idx = p * rhs_stride[0] + j * rhs_stride[1];
+                            sum += lhs[lhs_idx] * rhs[rhs_idx];
+                        }
+                        out[i * n + j] = sum;
+                    }
+                }
+                Ok(Self::F32(out))
+            }
+            (CPUStorage::F64(lhs), CPUStorage::F64(rhs)) => {
+                let mut out = vec![0f64; m * n];
+                for i in 0..m {
+                    for j in 0..n {
+                        let mut sum = 0f64;
+                        for p in 0..k {
+                            let lhs_idx = i * lhs_stride[0] + p * lhs_stride[1];
+                            let rhs_idx = p * rhs_stride[0] + j * rhs_stride[1];
+                            sum += lhs[lhs_idx] * rhs[rhs_idx];
+                        }
+                        out[i * n + j] = sum;
+                    }
+                }
+                Ok(Self::F64(out))
+            }
+            _ => Err(Error::BinaryOperationDTypeMismatch {
+                lhs: self.dtype(),
+                rhs: rhs.dtype(),
+                op: "matmul",
+            }),
+        }
+    }
 }

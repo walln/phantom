@@ -6,9 +6,13 @@ pub enum Operation {
     Mul(Tensor, Tensor),
     Div(Tensor, Tensor),
 
+    MatMul(Tensor, Tensor),
+
     Sqr(Tensor),
     Sqrt(Tensor),
     Neg(Tensor),
+
+    Transpose(Tensor),
 
     Affine { node: Tensor, mul: f64, add: f64 },
 }

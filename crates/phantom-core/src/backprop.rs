@@ -27,14 +27,18 @@ impl Tensor {
                     Operation::Add(lhs, rhs)
                     | Operation::Sub(lhs, rhs)
                     | Operation::Mul(lhs, rhs)
-                    | Operation::Div(lhs, rhs) => {
+                    | Operation::Div(lhs, rhs)
+                    | Operation::MatMul(lhs, rhs) => {
                         let (target, nodes) = walk(lhs, nodes, seen);
                         tracked |= target;
                         let (target, nodes) = walk(rhs, nodes, seen);
                         tracked |= target;
                         nodes
                     }
-                    Operation::Sqr(node) | Operation::Sqrt(node) | Operation::Neg(node) => {
+                    Operation::Sqr(node)
+                    | Operation::Sqrt(node)
+                    | Operation::Neg(node)
+                    | Operation::Transpose(node) => {
                         let (target, nodes) = walk(node, nodes, seen);
                         tracked |= target;
                         nodes
@@ -72,7 +76,7 @@ impl Tensor {
     /// The gradient of a node is the sum of the gradients of all the nodes that depend on it.
     /// The gradient of a node is computed by applying the chain rule to the node's operation.
     /// ```rust
-    /// use phantom::{Tensor, Device};
+    /// use phantom_core::{Tensor, Device};
     ///
     /// let x = Tensor::new(&[[2f32, 2.], [1f32, 2.]], Device::CPU)?;
     /// let y = Tensor::new(&[[2f32, 2.], [5f32, 6.]], Device::CPU)?;
@@ -80,7 +84,7 @@ impl Tensor {
     /// let gradients = z.backward()?;
     /// assert_eq!(gradients.len(), 1);
     ///
-    /// # Ok::<(), phantom::Error>(())
+    /// # Ok::<(), phantom_core::Error>(())
     /// ```
     pub fn backward(&self) -> Result<HashMap<TensorID, Tensor>> {
         let sorted_nodes = self.sorted_nodes();
@@ -141,6 +145,19 @@ impl Tensor {
                             .or_insert_with(|| rhs.zeros_like());
                         *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
                     }
+                    Operation::MatMul(lhs, rhs) => {
+                        let lhs_gradient = gradient.matmul(&rhs.transpose()?)?;
+                        let lhs_gradient_sum = gradients
+                            .entry(lhs.id())
+                            .or_insert_with(|| lhs.zeros_like());
+                        *lhs_gradient_sum = lhs_gradient_sum.add(&lhs_gradient)?;
+
+                        let rhs_gradient = lhs.transpose()?.matmul(&gradient)?;
+                        let rhs_gradient_sum = gradients
+                            .entry(rhs.id())
+                            .or_insert_with(|| rhs.zeros_like());
+                        *rhs_gradient_sum = rhs_gradient_sum.add(&rhs_gradient)?;
+                    }
                     Operation::Affine { node, mul, .. } => {
                         let node_gradient = gradient.affine(*mul, 0.)?;
                         let gradient_sum = gradients
@@ -168,6 +185,13 @@ impl Tensor {
                             .entry(node.id())
                             .or_insert_with(|| node.zeros_like());
                         *gradient_sum = gradient_sum.add(&node_gradient)?
+                    }
+                    Operation::Transpose(node) => {
+                        let node_gradient = gradient.transpose()?;
+                        let gradient_sum = gradients
+                            .entry(node.id())
+                            .or_insert_with(|| node.zeros_like());
+                        *gradient_sum = gradient_sum.add(&node_gradient)?;
                     }
                 }
             }

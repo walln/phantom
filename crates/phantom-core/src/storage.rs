@@ -231,4 +231,31 @@ impl Storage {
     pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
         self.unary_operation::<Neg>(shape, stride)
     }
+
+    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+        match self {
+            Storage::CPU(storage) => {
+                let storage = storage.transpose(shape, stride)?;
+                Ok(Self::CPU(storage))
+            }
+        }
+    }
+
+    pub(crate) fn matmul(
+        &self,
+        rhs: &Self,
+        lhs_shape: (usize, usize),
+        lhs_stride: &[usize],
+        rhs_shape: (usize, usize),
+        rhs_stride: &[usize],
+    ) -> Result<Self> {
+        self.matches_device(rhs, "matmul")?;
+        self.matches_dtype(rhs, "matmul")?;
+        match (self, rhs) {
+            (Storage::CPU(lhs), Storage::CPU(rhs)) => {
+                let storage = lhs.matmul(lhs_shape, lhs_stride, rhs, rhs_shape, rhs_stride)?;
+                Ok(Self::CPU(storage))
+            }
+        }
+    }
 }
