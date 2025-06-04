@@ -1,7 +1,7 @@
-use phantom_core::{DType, Device, Result, Tensor};
+use phantom_core::{DType, Device, Tensor};
 
 #[test]
-fn construct() -> Result<()> {
+fn construct() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let tensor = Tensor::zeros(&[2, 3], DType::F32, Device::CPU);
 
     let rank = tensor.rank();
@@ -16,7 +16,7 @@ fn construct() -> Result<()> {
 }
 
 #[test]
-fn zeros() -> Result<()> {
+fn zeros() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let tensor = Tensor::zeros((5, 2), DType::F32, Device::CPU);
     let (dim_one, dim_two) = tensor.shape().rank_two()?;
 
@@ -31,7 +31,7 @@ fn zeros() -> Result<()> {
 }
 
 #[test]
-fn ones() -> Result<()> {
+fn ones() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let tensor = Tensor::ones((5, 2), DType::F32, Device::CPU);
     let (dim_one, dim_two) = tensor.shape().rank_two()?;
 
@@ -46,7 +46,7 @@ fn ones() -> Result<()> {
 }
 
 #[test]
-fn rank_one() -> Result<()> {
+fn rank_one() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data = &[1f32, 2f32, 3f32, 4f32, 5f32, 6f32];
     let tensor = Tensor::new(data, Device::CPU)?;
     let dims = tensor.shape().rank_one()?;
@@ -60,7 +60,7 @@ fn rank_one() -> Result<()> {
 }
 
 #[test]
-fn rank_two() -> Result<()> {
+fn rank_two() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data = &[
         [1f32, 2f32, 3f32, 4f32, 5f32, 6f32],
         [7f32, 8f32, 9f32, 10f32, 11f32, 12f32],
@@ -77,7 +77,7 @@ fn rank_two() -> Result<()> {
 }
 
 #[test]
-fn add_rank_one() -> Result<()> {
+fn add_rank_one() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let a = Tensor::zeros(&[6], DType::F32, Device::CPU);
     let b = Tensor::ones(&[6], DType::F32, Device::CPU);
 
@@ -105,7 +105,7 @@ fn add_rank_one() -> Result<()> {
 }
 
 #[test]
-fn add_rank_two() -> Result<()> {
+fn add_rank_two() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let a = Tensor::zeros(&[2, 3], DType::F32, Device::CPU);
     let b = Tensor::ones(&[2, 3], DType::F32, Device::CPU);
 
@@ -140,7 +140,7 @@ fn add_rank_two() -> Result<()> {
 }
 
 #[test]
-fn mul_rank_one() -> Result<()> {
+fn mul_rank_one() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let a = Tensor::zeros(&[6], DType::F32, Device::CPU);
     let b = Tensor::ones(&[6], DType::F32, Device::CPU);
 
@@ -168,7 +168,7 @@ fn mul_rank_one() -> Result<()> {
 }
 
 #[test]
-fn mul_rank_two() -> Result<()> {
+fn mul_rank_two() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let a = Tensor::zeros(&[2, 3], DType::F32, Device::CPU);
     let b = Tensor::ones(&[2, 3], DType::F32, Device::CPU);
 
@@ -203,7 +203,7 @@ fn mul_rank_two() -> Result<()> {
 }
 
 #[test]
-fn binary_chaining() -> Result<()> {
+fn binary_chaining() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data_a = &[[3f32, 1., 4., 1., 5.], [2., 1., 7., 8., 2.]];
     let a = Tensor::new(data_a, Device::CPU)?;
 

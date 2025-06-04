@@ -1,8 +1,8 @@
-use phantom_core::{Device, Tensor, Result};
+use phantom_core::{Device, Tensor};
 use phantom_layers::Linear;
 
 #[test]
-fn linear_forward_and_backward() -> Result<()> {
+fn linear_forward_and_backward() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let weight = Tensor::var(&[
         [1f32, 2.],
         [3., 4.],

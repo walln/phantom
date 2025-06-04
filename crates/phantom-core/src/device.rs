@@ -1,5 +1,6 @@
 use crate::backend::cpu_backend::CPUStorage;
-use crate::{storage::Storage, DType, Result, Shape};
+use crate::{storage::Storage, DType, Shape};
+use crate::shape::ShapeError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Device {
@@ -41,12 +42,12 @@ impl Device {
 }
 
 pub trait NDArray {
-    fn shape(&self) -> Result<Shape>;
+    fn shape(&self) -> std::result::Result<Shape, ShapeError>;
     fn to_cpu(&self) -> CPUStorage;
 }
 
 impl<S: crate::WithDType> NDArray for S {
-    fn shape(&self) -> Result<Shape> {
+    fn shape(&self) -> std::result::Result<Shape, ShapeError> {
         Ok(Shape::from(()))
     }
 
@@ -56,7 +57,7 @@ impl<S: crate::WithDType> NDArray for S {
 }
 
 impl<S: crate::WithDType> NDArray for &[S] {
-    fn shape(&self) -> Result<Shape> {
+    fn shape(&self) -> std::result::Result<Shape, ShapeError> {
         Ok(Shape::from(self.len()))
     }
 
@@ -66,7 +67,7 @@ impl<S: crate::WithDType> NDArray for &[S] {
 }
 
 impl<S: crate::WithDType, const N: usize> NDArray for &[S; N] {
-    fn shape(&self) -> Result<Shape> {
+    fn shape(&self) -> std::result::Result<Shape, ShapeError> {
         Ok(Shape::from(self.len()))
     }
 
@@ -76,7 +77,7 @@ impl<S: crate::WithDType, const N: usize> NDArray for &[S; N] {
 }
 
 impl<S: crate::WithDType, const N: usize, const M: usize> NDArray for &[[S; N]; M] {
-    fn shape(&self) -> Result<Shape> {
+    fn shape(&self) -> std::result::Result<Shape, ShapeError> {
         Ok(Shape::from((M, N)))
     }
 

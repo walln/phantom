@@ -1,5 +1,30 @@
 use crate::backend::cpu_backend::CPUStorage;
-use crate::{DType, Device, Error, Result, Shape};
+use crate::{DType, Device, Shape};
+
+#[derive(Debug)]
+pub enum StorageError {
+    BinaryOperationDeviceMismatch { lhs: Device, rhs: Device, op: &'static str },
+    BinaryOperationDTypeMismatch { lhs: DType, rhs: DType, op: &'static str },
+    BinaryOperationShapeMismatch { lhs: Shape, rhs: Shape, op: &'static str },
+}
+
+impl std::fmt::Display for StorageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageError::BinaryOperationDeviceMismatch { lhs, rhs, op } => {
+                write!(f, "unexpected device in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+            }
+            StorageError::BinaryOperationDTypeMismatch { lhs, rhs, op } => {
+                write!(f, "unexpected dtype in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+            }
+            StorageError::BinaryOperationShapeMismatch { lhs, rhs, op } => {
+                write!(f, "unexpected shape in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+            }
+        }
+    }
+}
+
+impl std::error::Error for StorageError {}
 
 pub enum Storage {
     CPU(CPUStorage),
@@ -114,29 +139,29 @@ impl Storage {
         }
     }
 
-    pub(crate) fn matches_device(&self, rhs: &Self, op: &'static str) -> Result<()> {
+    pub(crate) fn matches_device(&self, rhs: &Self, op: &'static str) -> std::result::Result<(), StorageError> {
         let lhs = self.device();
         let rhs = rhs.device();
 
         if lhs != rhs {
-            Err(Error::BinaryOperationDeviceMismatch { lhs, rhs, op })
+            Err(StorageError::BinaryOperationDeviceMismatch { lhs, rhs, op })
         } else {
             Ok(())
         }
     }
 
-    pub(crate) fn matches_dtype(&self, rhs: &Self, op: &'static str) -> Result<()> {
+    pub(crate) fn matches_dtype(&self, rhs: &Self, op: &'static str) -> std::result::Result<(), StorageError> {
         let lhs = self.dtype();
         let rhs = rhs.dtype();
 
         if lhs != rhs {
-            Err(Error::BinaryOperationDTypeMismatch { lhs, rhs, op })
+            Err(StorageError::BinaryOperationDTypeMismatch { lhs, rhs, op })
         } else {
             Ok(())
         }
     }
 
-    fn unary_operation<T: UnaryOperation>(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    fn unary_operation<T: UnaryOperation>(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
         match self {
             Storage::CPU(storage) => {
                 let storage = storage.unary_impl::<T>(shape, stride)?;
@@ -151,7 +176,7 @@ impl Storage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         // Check the operands are valid for this operation.
         self.matches_device(rhs, T::NAME)?;
         self.matches_dtype(rhs, T::NAME)?;
@@ -171,7 +196,7 @@ impl Storage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         self.binary_operation::<Add>(rhs, shape, lhs_stride, rhs_stride)
     }
 
@@ -181,7 +206,7 @@ impl Storage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         self.binary_operation::<Sub>(rhs, shape, lhs_stride, rhs_stride)
     }
 
@@ -191,7 +216,7 @@ impl Storage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         self.binary_operation::<Mul>(rhs, shape, lhs_stride, rhs_stride)
     }
 
@@ -201,7 +226,7 @@ impl Storage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         self.binary_operation::<Div>(rhs, shape, lhs_stride, rhs_stride)
     }
 
@@ -211,7 +236,7 @@ impl Storage {
         stride: &[usize],
         mul: f64,
         add: f64,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         match self {
             Storage::CPU(storage) => {
                 let storage = storage.affine(shape, stride, mul, add)?;
@@ -220,19 +245,19 @@ impl Storage {
         }
     }
 
-    pub(crate) fn sqr(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    pub(crate) fn sqr(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Sqr>(shape, stride)
     }
 
-    pub(crate) fn sqrt(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    pub(crate) fn sqrt(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Sqrt>(shape, stride)
     }
 
-    pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Neg>(shape, stride)
     }
 
-    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
+    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
         match self {
             Storage::CPU(storage) => {
                 let storage = storage.transpose(shape, stride)?;
@@ -248,7 +273,7 @@ impl Storage {
         lhs_stride: &[usize],
         rhs_shape: (usize, usize),
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         self.matches_device(rhs, "matmul")?;
         self.matches_dtype(rhs, "matmul")?;
         match (self, rhs) {
