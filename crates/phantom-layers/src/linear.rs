@@ -14,4 +14,3 @@ impl Linear {
         input.matmul(&self.weight)
     }
 }
-

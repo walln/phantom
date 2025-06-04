@@ -9,9 +9,10 @@ mod storage;
 mod tensor;
 
 pub use backend::cpu_backend::CPUStorage;
+pub use backprop::BackpropError;
 pub use device::Device;
-pub use dtype::{DType, WithDType};
 pub use dtype::DTypeError;
+pub use dtype::{DType, WithDType};
 pub use index::StridedIndex;
 pub use operation::Operation;
 pub use shape::Shape;
@@ -19,4 +20,3 @@ pub use shape::ShapeError;
 pub use storage::Storage;
 pub use storage::StorageError;
 pub use tensor::{Tensor, TensorError, TensorID};
-pub use backprop::BackpropError;

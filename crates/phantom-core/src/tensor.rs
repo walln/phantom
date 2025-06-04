@@ -2,13 +2,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::device::{Device, NDArray};
+use crate::dtype::DTypeError;
 use crate::index::StridedIndex;
+use crate::shape::ShapeError;
 use crate::storage::Storage;
+use crate::storage::StorageError;
 use crate::WithDType;
 use crate::{DType, Operation, Shape};
-use crate::dtype::DTypeError;
-use crate::shape::ShapeError;
-use crate::storage::StorageError;
 
 #[derive(Debug)]
 pub enum TensorError {
@@ -131,7 +131,11 @@ macro_rules! unary_operation {
 }
 
 impl Tensor {
-    pub(crate) fn new_impl<A: NDArray>(array: A, device: Device, variable: bool) -> std::result::Result<Self, TensorError> {
+    pub(crate) fn new_impl<A: NDArray>(
+        array: A,
+        device: Device,
+        variable: bool,
+    ) -> std::result::Result<Self, TensorError> {
         let shape: Shape = array.shape()?;
         let storage: Storage = device.tensor(array);
         let stride: Vec<usize> = shape.stride_contiguous();
@@ -475,7 +479,9 @@ impl Tensor {
     /// assert_eq!(a.to_vector_rank_two::<f32>()?, &[[0., 1.], [2., 3.], [4., 5.]]);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_vector_rank_two<S: WithDType>(&self) -> std::result::Result<Vec<Vec<S>>, TensorError> {
+    pub fn to_vector_rank_two<S: WithDType>(
+        &self,
+    ) -> std::result::Result<Vec<Vec<S>>, TensorError> {
         let (dim_one, dim_two) = self.shape().rank_two()?;
         match &self.storage {
             Storage::CPU(storage) => {
@@ -510,11 +516,13 @@ impl Tensor {
         let rhs = rhs.shape();
 
         if lhs != rhs {
-            Err(TensorError::Storage(StorageError::BinaryOperationShapeMismatch {
-                lhs: lhs.clone(),
-                rhs: rhs.clone(),
-                op: operation,
-            }))
+            Err(TensorError::Storage(
+                StorageError::BinaryOperationShapeMismatch {
+                    lhs: lhs.clone(),
+                    rhs: rhs.clone(),
+                    op: operation,
+                },
+            ))
         } else {
             Ok(lhs)
         }
@@ -596,29 +604,39 @@ impl Tensor {
         if self.rank() != 2 || rhs.rank() != 2 {
             return Err(TensorError::Shape(ShapeError::UnexpectedRank {
                 expected: 2,
-                actual: if self.rank() != 2 { self.rank() } else { rhs.rank() },
-                shape: if self.rank() != 2 { self.shape().clone() } else { rhs.shape().clone() },
+                actual: if self.rank() != 2 {
+                    self.rank()
+                } else {
+                    rhs.rank()
+                },
+                shape: if self.rank() != 2 {
+                    self.shape().clone()
+                } else {
+                    rhs.shape().clone()
+                },
             }));
         }
         let (m, k) = self.shape().rank_two()?;
         let (k_rhs, n) = rhs.shape().rank_two()?;
         if k != k_rhs {
-            return Err(TensorError::Storage(StorageError::BinaryOperationShapeMismatch {
-                lhs: self.shape().clone(),
-                rhs: rhs.shape().clone(),
-                op: "matmul",
-            }));
+            return Err(TensorError::Storage(
+                StorageError::BinaryOperationShapeMismatch {
+                    lhs: self.shape().clone(),
+                    rhs: rhs.shape().clone(),
+                    op: "matmul",
+                },
+            ));
         }
         let storage = self
             .storage
             .matmul(
-            &rhs.storage,
-            (m, k),
-            self.stride(),
-            (k_rhs, n),
-            rhs.stride(),
-        )
-        .map_err(TensorError::from)?;
+                &rhs.storage,
+                (m, k),
+                self.stride(),
+                (k_rhs, n),
+                rhs.stride(),
+            )
+            .map_err(TensorError::from)?;
         let shape = Shape::from((m, n));
         let t = Tensor_ {
             id: TensorID::new(),
@@ -651,7 +669,9 @@ macro_rules! binary_trait {
             }
         }
 
-        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>> for Tensor {
+        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>>
+            for Tensor
+        {
             type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: std::result::Result<B, TensorError>) -> Self::Output {
@@ -659,7 +679,9 @@ macro_rules! binary_trait {
             }
         }
 
-        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>> for &Tensor {
+        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>>
+            for &Tensor
+        {
             type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: std::result::Result<B, TensorError>) -> Self::Output {

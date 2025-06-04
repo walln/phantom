@@ -3,22 +3,46 @@ use crate::{DType, Device, Shape};
 
 #[derive(Debug)]
 pub enum StorageError {
-    BinaryOperationDeviceMismatch { lhs: Device, rhs: Device, op: &'static str },
-    BinaryOperationDTypeMismatch { lhs: DType, rhs: DType, op: &'static str },
-    BinaryOperationShapeMismatch { lhs: Shape, rhs: Shape, op: &'static str },
+    BinaryOperationDeviceMismatch {
+        lhs: Device,
+        rhs: Device,
+        op: &'static str,
+    },
+    BinaryOperationDTypeMismatch {
+        lhs: DType,
+        rhs: DType,
+        op: &'static str,
+    },
+    BinaryOperationShapeMismatch {
+        lhs: Shape,
+        rhs: Shape,
+        op: &'static str,
+    },
 }
 
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StorageError::BinaryOperationDeviceMismatch { lhs, rhs, op } => {
-                write!(f, "unexpected device in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+                write!(
+                    f,
+                    "unexpected device in {}, lhs: {:?}, rhs: {:?}",
+                    op, lhs, rhs
+                )
             }
             StorageError::BinaryOperationDTypeMismatch { lhs, rhs, op } => {
-                write!(f, "unexpected dtype in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+                write!(
+                    f,
+                    "unexpected dtype in {}, lhs: {:?}, rhs: {:?}",
+                    op, lhs, rhs
+                )
             }
             StorageError::BinaryOperationShapeMismatch { lhs, rhs, op } => {
-                write!(f, "unexpected shape in {}, lhs: {:?}, rhs: {:?}", op, lhs, rhs)
+                write!(
+                    f,
+                    "unexpected shape in {}, lhs: {:?}, rhs: {:?}",
+                    op, lhs, rhs
+                )
             }
         }
     }
@@ -139,7 +163,11 @@ impl Storage {
         }
     }
 
-    pub(crate) fn matches_device(&self, rhs: &Self, op: &'static str) -> std::result::Result<(), StorageError> {
+    pub(crate) fn matches_device(
+        &self,
+        rhs: &Self,
+        op: &'static str,
+    ) -> std::result::Result<(), StorageError> {
         let lhs = self.device();
         let rhs = rhs.device();
 
@@ -150,7 +178,11 @@ impl Storage {
         }
     }
 
-    pub(crate) fn matches_dtype(&self, rhs: &Self, op: &'static str) -> std::result::Result<(), StorageError> {
+    pub(crate) fn matches_dtype(
+        &self,
+        rhs: &Self,
+        op: &'static str,
+    ) -> std::result::Result<(), StorageError> {
         let lhs = self.dtype();
         let rhs = rhs.dtype();
 
@@ -161,7 +193,11 @@ impl Storage {
         }
     }
 
-    fn unary_operation<T: UnaryOperation>(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    fn unary_operation<T: UnaryOperation>(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         match self {
             Storage::CPU(storage) => {
                 let storage = storage.unary_impl::<T>(shape, stride)?;
@@ -245,19 +281,35 @@ impl Storage {
         }
     }
 
-    pub(crate) fn sqr(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    pub(crate) fn sqr(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Sqr>(shape, stride)
     }
 
-    pub(crate) fn sqrt(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    pub(crate) fn sqrt(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Sqrt>(shape, stride)
     }
 
-    pub(crate) fn neg(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    pub(crate) fn neg(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         self.unary_operation::<Neg>(shape, stride)
     }
 
-    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    pub(crate) fn transpose(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         match self {
             Storage::CPU(storage) => {
                 let storage = storage.transpose(shape, stride)?;
