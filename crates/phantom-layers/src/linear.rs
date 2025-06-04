@@ -1,4 +1,4 @@
-use phantom_core::{Result, Tensor};
+use phantom_core::{Tensor, TensorError};
 
 #[derive(Clone)]
 pub struct Linear {
@@ -10,7 +10,7 @@ impl Linear {
         Self { weight }
     }
 
-    pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
+    pub fn forward(&self, input: &Tensor) -> std::result::Result<Tensor, TensorError> {
         input.matmul(&self.weight)
     }
 }

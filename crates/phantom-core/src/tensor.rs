@@ -5,7 +5,47 @@ use crate::device::{Device, NDArray};
 use crate::index::StridedIndex;
 use crate::storage::Storage;
 use crate::WithDType;
-use crate::{DType, Error, Operation, Result, Shape};
+use crate::{DType, Operation, Shape};
+use crate::dtype::DTypeError;
+use crate::shape::ShapeError;
+use crate::storage::StorageError;
+
+#[derive(Debug)]
+pub enum TensorError {
+    Shape(ShapeError),
+    DType(DTypeError),
+    Storage(StorageError),
+}
+
+impl From<ShapeError> for TensorError {
+    fn from(e: ShapeError) -> Self {
+        TensorError::Shape(e)
+    }
+}
+
+impl From<DTypeError> for TensorError {
+    fn from(e: DTypeError) -> Self {
+        TensorError::DType(e)
+    }
+}
+
+impl From<StorageError> for TensorError {
+    fn from(e: StorageError) -> Self {
+        TensorError::Storage(e)
+    }
+}
+
+impl std::fmt::Display for TensorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TensorError::Shape(e) => write!(f, "{e}"),
+            TensorError::DType(e) => write!(f, "{e}"),
+            TensorError::Storage(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for TensorError {}
 
 /// Allow each tensor to be uniquely idenified. This makes it cheap to compute if
 /// a given tensor is a reference to the same underlying data as another tensor.
@@ -51,7 +91,7 @@ impl std::fmt::Debug for Tensor {
 
 macro_rules! binary_operation {
     ($fn_name:ident, $operation_name:ident, $storage_operation:ident) => {
-        pub fn $fn_name(&self, rhs: &Self) -> Result<Self> {
+        pub fn $fn_name(&self, rhs: &Self) -> std::result::Result<Self, TensorError> {
             let shape = self.binary_operation_shape_matches(rhs, stringify!($fn_name))?;
             let storage = self.storage.$storage_operation(
                 &rhs.storage,
@@ -74,7 +114,7 @@ macro_rules! binary_operation {
 
 macro_rules! unary_operation {
     ($fn_name:ident, $operation_name:ident, $storage_operation:ident) => {
-        pub fn $fn_name(&self) -> Result<Self> {
+        pub fn $fn_name(&self) -> std::result::Result<Self, TensorError> {
             let shape = self.shape();
             let storage = self.storage.$storage_operation(shape, self.stride())?;
             let t = Tensor_ {
@@ -91,7 +131,7 @@ macro_rules! unary_operation {
 }
 
 impl Tensor {
-    pub(crate) fn new_impl<A: NDArray>(array: A, device: Device, variable: bool) -> Result<Self> {
+    pub(crate) fn new_impl<A: NDArray>(array: A, device: Device, variable: bool) -> std::result::Result<Self, TensorError> {
         let shape: Shape = array.shape()?;
         let storage: Storage = device.tensor(array);
         let stride: Vec<usize> = shape.stride_contiguous();
@@ -113,9 +153,9 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[6]));
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn new<A: NDArray>(array: A, device: Device) -> Result<Self> {
+    pub fn new<A: NDArray>(array: A, device: Device) -> std::result::Result<Self, TensorError> {
         Self::new_impl(array, device, false)
     }
 
@@ -124,9 +164,9 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::var(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
     /// assert_eq!(tensor.variable(), true);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn var<A: NDArray>(array: A, device: Device) -> Result<Self> {
+    pub fn var<A: NDArray>(array: A, device: Device) -> std::result::Result<Self, TensorError> {
         Self::new_impl(array, device, true)
     }
 
@@ -158,7 +198,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::zeros(&[2, 2], phantom_core::DType::F32, Device::CPU);
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn zeros<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
         Self::zeros_impl(shape, dtype, device, false)
@@ -170,7 +210,7 @@ impl Tensor {
     /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// let zeros = tensor.zeros_like();
     /// assert_eq!(zeros.shape(), tensor.shape());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn zeros_like(&self) -> Self {
         Tensor::zeros(self.shape(), self.dtype(), self.device())
@@ -181,7 +221,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::zeros_var(&[2, 2], phantom_core::DType::F32, Device::CPU);
     /// assert_eq!(tensor.variable(), true);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn zeros_var<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
         Self::zeros_impl(shape, dtype, device, true)
@@ -215,7 +255,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::ones(&[2, 2], phantom_core::DType::F32, Device::CPU);
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ones<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
         Self::ones_impl(shape, dtype, device, false)
@@ -227,7 +267,7 @@ impl Tensor {
     /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// let ones = tensor.ones_like();
     /// assert_eq!(ones.shape(), tensor.shape());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ones_like(&self) -> Self {
         Tensor::ones(self.shape(), self.dtype(), self.device())
@@ -238,7 +278,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::ones_var(&[2, 2], phantom_core::DType::F32, Device::CPU);
     /// assert_eq!(tensor.variable(), true);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn ones_var<S: Into<Shape>>(shape: S, dtype: DType, device: Device) -> Self {
         Self::ones_impl(shape, dtype, device, true)
@@ -249,19 +289,19 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(0f32, Device::CPU)?;
     /// assert_eq!(tensor.to_scalar::<f32>()?, 0f32);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_scalar<S: WithDType>(&self) -> Result<S> {
+    pub fn to_scalar<S: WithDType>(&self) -> std::result::Result<S, TensorError> {
         if self.rank() != 0 {
-            return Err(Error::UnexpectedRank {
+            return Err(TensorError::Shape(ShapeError::UnexpectedRank {
                 expected: 0,
                 actual: self.rank(),
                 shape: self.0.shape.clone(),
-            });
+            }));
         }
         match &self.0.storage {
             Storage::CPU(storage) => {
-                let data = S::storage_slice(storage)?;
+                let data = S::storage_slice(storage).map_err(TensorError::from)?;
                 Ok(data[0])
             }
         }
@@ -272,7 +312,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
     /// assert_eq!(tensor.id(), tensor.id());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn id(&self) -> TensorID {
         self.id
@@ -283,7 +323,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
     /// assert_eq!(tensor.dtype(), phantom_core::DType::F32);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn dtype(&self) -> DType {
         self.storage.dtype()
@@ -294,7 +334,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[0f32], Device::CPU)?;
     /// assert_eq!(tensor.device(), Device::CPU);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn device(&self) -> Device {
         self.storage.device()
@@ -305,7 +345,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device, Shape};
     /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(tensor.shape(), &Shape::from(&[2, 2]));
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn shape(&self) -> &Shape {
         &self.shape
@@ -316,7 +356,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(tensor.rank(), 2);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn rank(&self) -> usize {
         self.shape.rank()
@@ -327,7 +367,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(tensor.dims(), &[2, 2]);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn dims(&self) -> &[usize] {
         self.shape.dims()
@@ -338,7 +378,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(tensor.elem_count(), 4);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn elem_count(&self) -> usize {
         self.shape.elem_count()
@@ -349,7 +389,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(tensor.stride(), &[2, 1]);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn stride(&self) -> &[usize] {
         &self.stride
@@ -365,7 +405,7 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let tensor = Tensor::var(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert!(tensor.variable());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn variable(&self) -> bool {
         self.variable
@@ -380,7 +420,7 @@ impl Tensor {
     /// assert_eq!(iter.next(), Some(0));
     /// assert_eq!(iter.next(), Some(1));
     /// assert_eq!(iter.next(), None);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn strided_index(&self) -> StridedIndex {
         StridedIndex::new(self.dims(), self.stride())
@@ -392,7 +432,7 @@ impl Tensor {
     /// // Contigious example
     /// let a = Tensor::new(&[0f32], Device::CPU)?;
     /// assert!(a.contiguous());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn contiguous(&self) -> bool {
         let mut accumulated_stride = 1;
@@ -410,19 +450,19 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let a = Tensor::new(&[0f32, 1., 2., 3., 4., 5.], Device::CPU)?;
     /// assert_eq!(a.to_vector_rank_one::<f32>()?, &[0., 1., 2., 3., 4., 5.]);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_vector_rank_one<S: WithDType>(&self) -> Result<Vec<S>> {
+    pub fn to_vector_rank_one<S: WithDType>(&self) -> std::result::Result<Vec<S>, TensorError> {
         if self.rank() != 1 {
-            return Err(Error::UnexpectedRank {
+            return Err(TensorError::Shape(ShapeError::UnexpectedRank {
                 expected: 1,
                 actual: self.rank(),
                 shape: self.shape().clone(),
-            });
+            }));
         }
         match &self.storage {
             Storage::CPU(cpu_storage) => {
-                let data = S::storage_slice(cpu_storage)?;
+                let data = S::storage_slice(cpu_storage).map_err(TensorError::from)?;
                 Ok(self.strided_index().map(|i: usize| data[i]).collect())
             }
         }
@@ -433,13 +473,13 @@ impl Tensor {
     /// use phantom_core::{Tensor, Device};
     /// let a = Tensor::new(&[[0f32, 1.], [2., 3.], [4., 5.]], Device::CPU)?;
     /// assert_eq!(a.to_vector_rank_two::<f32>()?, &[[0., 1.], [2., 3.], [4., 5.]]);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_vector_rank_two<S: WithDType>(&self) -> Result<Vec<Vec<S>>> {
+    pub fn to_vector_rank_two<S: WithDType>(&self) -> std::result::Result<Vec<Vec<S>>, TensorError> {
         let (dim_one, dim_two) = self.shape().rank_two()?;
         match &self.storage {
             Storage::CPU(storage) => {
-                let data = S::storage_slice(storage)?;
+                let data = S::storage_slice(storage).map_err(TensorError::from)?;
                 let mut rows = vec![];
                 let mut index = self.strided_index();
                 for _idx_row in 0..dim_one {
@@ -459,22 +499,22 @@ impl Tensor {
     /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// let b = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// assert_eq!(a.binary_operation_shape_matches(&b, "add")?, a.shape());
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn binary_operation_shape_matches(
         &self,
         rhs: &Self,
         operation: &'static str,
-    ) -> Result<&Shape> {
+    ) -> std::result::Result<&Shape, TensorError> {
         let lhs = self.shape();
         let rhs = rhs.shape();
 
         if lhs != rhs {
-            Err(Error::BinaryOperationShapeMismatch {
+            Err(TensorError::Storage(StorageError::BinaryOperationShapeMismatch {
                 lhs: lhs.clone(),
                 rhs: rhs.clone(),
                 op: operation,
-            })
+            }))
         } else {
             Ok(lhs)
         }
@@ -493,11 +533,14 @@ impl Tensor {
     /// let a = Tensor::new(&[[0f32, 1.], [2., 3.]], Device::CPU)?;
     /// let a = a.affine(4., -2.)?;
     /// assert_eq!(a.to_vector_rank_two::<f32>()?, &[[-2.0, 2.0], [6.0, 10.0]]);
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn affine(&self, mul: f64, add: f64) -> Result<Self> {
+    pub fn affine(&self, mul: f64, add: f64) -> std::result::Result<Self, TensorError> {
         let shape = self.shape();
-        let storage = self.storage.affine(self.shape(), self.stride(), mul, add)?;
+        let storage = self
+            .storage
+            .affine(self.shape(), self.stride(), mul, add)
+            .map_err(TensorError::from)?;
 
         let t = Tensor_ {
             id: TensorID::new(),
@@ -523,16 +566,19 @@ impl Tensor {
     unary_operation!(sqrt, Sqrt, sqrt);
     unary_operation!(neg, Neg, neg);
 
-    pub fn transpose(&self) -> Result<Self> {
+    pub fn transpose(&self) -> std::result::Result<Self, TensorError> {
         if self.rank() != 2 {
-            return Err(Error::UnexpectedRank {
+            return Err(TensorError::Shape(ShapeError::UnexpectedRank {
                 expected: 2,
                 actual: self.rank(),
                 shape: self.shape().clone(),
-            });
+            }));
         }
         let shape = self.shape();
-        let storage = self.storage.transpose(shape, self.stride())?;
+        let storage = self
+            .storage
+            .transpose(shape, self.stride())
+            .map_err(TensorError::from)?;
         let (rows, cols) = shape.rank_two()?;
         let new_shape = Shape::from((cols, rows));
         let t = Tensor_ {
@@ -546,30 +592,33 @@ impl Tensor {
         Ok(Self(Arc::new(t)))
     }
 
-    pub fn matmul(&self, rhs: &Self) -> Result<Self> {
+    pub fn matmul(&self, rhs: &Self) -> std::result::Result<Self, TensorError> {
         if self.rank() != 2 || rhs.rank() != 2 {
-            return Err(Error::UnexpectedRank {
+            return Err(TensorError::Shape(ShapeError::UnexpectedRank {
                 expected: 2,
                 actual: if self.rank() != 2 { self.rank() } else { rhs.rank() },
                 shape: if self.rank() != 2 { self.shape().clone() } else { rhs.shape().clone() },
-            });
+            }));
         }
         let (m, k) = self.shape().rank_two()?;
         let (k_rhs, n) = rhs.shape().rank_two()?;
         if k != k_rhs {
-            return Err(Error::BinaryOperationShapeMismatch {
+            return Err(TensorError::Storage(StorageError::BinaryOperationShapeMismatch {
                 lhs: self.shape().clone(),
                 rhs: rhs.shape().clone(),
                 op: "matmul",
-            });
+            }));
         }
-        let storage = self.storage.matmul(
+        let storage = self
+            .storage
+            .matmul(
             &rhs.storage,
             (m, k),
             self.stride(),
             (k_rhs, n),
             rhs.stride(),
-        )?;
+        )
+        .map_err(TensorError::from)?;
         let shape = Shape::from((m, n));
         let t = Tensor_ {
             id: TensorID::new(),
@@ -587,7 +636,7 @@ impl Tensor {
 macro_rules! binary_trait {
     ($trait:ident, $fn1:ident, $mul:expr, $add:expr) => {
         impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<B> for Tensor {
-            type Output = Result<Tensor>;
+            type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: B) -> Self::Output {
                 Tensor::$fn1(&self, rhs.borrow())
@@ -595,31 +644,31 @@ macro_rules! binary_trait {
         }
 
         impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<B> for &Tensor {
-            type Output = Result<Tensor>;
+            type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: B) -> Self::Output {
                 Tensor::$fn1(&self, rhs.borrow())
             }
         }
 
-        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<Result<B>> for Tensor {
-            type Output = Result<Tensor>;
+        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>> for Tensor {
+            type Output = std::result::Result<Tensor, TensorError>;
 
-            fn $fn1(self, rhs: Result<B>) -> Self::Output {
+            fn $fn1(self, rhs: std::result::Result<B, TensorError>) -> Self::Output {
                 Tensor::$fn1(&self, rhs?.borrow())
             }
         }
 
-        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<Result<B>> for &Tensor {
-            type Output = Result<Tensor>;
+        impl<B: std::borrow::Borrow<Tensor>> std::ops::$trait<std::result::Result<B, TensorError>> for &Tensor {
+            type Output = std::result::Result<Tensor, TensorError>;
 
-            fn $fn1(self, rhs: Result<B>) -> Self::Output {
+            fn $fn1(self, rhs: std::result::Result<B, TensorError>) -> Self::Output {
                 Tensor::$fn1(&self, rhs?.borrow())
             }
         }
 
         impl std::ops::$trait<f64> for Tensor {
-            type Output = Result<Tensor>;
+            type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: f64) -> Self::Output {
                 self.affine($mul(rhs), $add(rhs))
@@ -627,7 +676,7 @@ macro_rules! binary_trait {
         }
 
         impl std::ops::$trait<f64> for &Tensor {
-            type Output = Result<Tensor>;
+            type Output = std::result::Result<Tensor, TensorError>;
 
             fn $fn1(self, rhs: f64) -> Self::Output {
                 self.affine($mul(rhs), $add(rhs))

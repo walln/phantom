@@ -1,4 +1,25 @@
-use crate::{CPUStorage, Error, Result};
+use crate::CPUStorage;
+
+#[derive(Debug)]
+pub enum DTypeError {
+    UnexpectedDType { expected: DType, actual: DType },
+}
+
+impl std::fmt::Display for DTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DTypeError::UnexpectedDType { expected, actual } => {
+                write!(
+                    f,
+                    "unexpected dtype, expected: {:?}, actual: {:?}",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for DTypeError {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum DType {
@@ -22,7 +43,7 @@ pub trait WithDType: Sized + Copy {
     fn to_cpu(data: &[Self]) -> CPUStorage {
         Self::to_cpu_owned(data.to_vec())
     }
-    fn storage_slice(storage: &CPUStorage) -> Result<&[Self]>;
+    fn storage_slice(storage: &CPUStorage) -> std::result::Result<&[Self], DTypeError>;
 }
 
 macro_rules! with_dtype {
@@ -34,10 +55,10 @@ macro_rules! with_dtype {
                 CPUStorage::$dtype(data)
             }
 
-            fn storage_slice(storage: &CPUStorage) -> Result<&[Self]> {
+            fn storage_slice(storage: &CPUStorage) -> std::result::Result<&[Self], DTypeError> {
                 match storage {
                     CPUStorage::$dtype(data) => Ok(data),
-                    _ => Err(Error::UnexpectedDType {
+                    _ => Err(DTypeError::UnexpectedDType {
                         expected: DType::$dtype,
                         actual: storage.dtype(),
                     }),

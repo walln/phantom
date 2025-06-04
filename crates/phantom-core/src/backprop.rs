@@ -1,6 +1,31 @@
 use crate::tensor::{Tensor, TensorID};
-use crate::Operation;
-use crate::Result;
+use crate::{Operation};
+use crate::tensor::TensorError;
+
+#[derive(Debug)]
+pub enum BackpropError {
+    MissingGradient { tensor: TensorID },
+    Tensor(TensorError),
+}
+
+impl From<TensorError> for BackpropError {
+    fn from(e: TensorError) -> Self {
+        BackpropError::Tensor(e)
+    }
+}
+
+impl std::fmt::Display for BackpropError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BackpropError::MissingGradient { tensor } => {
+                write!(f, "missing gradient for tensor {:?}", tensor)
+            }
+            BackpropError::Tensor(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for BackpropError {}
 use std::collections::HashMap;
 
 impl Tensor {
@@ -84,9 +109,9 @@ impl Tensor {
     /// let gradients = z.backward()?;
     /// assert_eq!(gradients.len(), 1);
     ///
-    /// # Ok::<(), phantom_core::Error>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn backward(&self) -> Result<HashMap<TensorID, Tensor>> {
+    pub fn backward(&self) -> std::result::Result<HashMap<TensorID, Tensor>, BackpropError> {
         let sorted_nodes = self.sorted_nodes();
         let mut gradients = HashMap::new();
 
@@ -97,7 +122,9 @@ impl Tensor {
                 continue;
             }
 
-            let gradient = gradients.remove(&node.id()).unwrap();
+            let gradient = gradients
+                .remove(&node.id())
+                .ok_or(BackpropError::MissingGradient { tensor: node.id() })?;
 
             if let Some(op) = node.op() {
                 match op {

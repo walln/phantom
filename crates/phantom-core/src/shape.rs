@@ -1,4 +1,20 @@
-use crate::{Error, Result};
+
+#[derive(Debug)]
+pub enum ShapeError {
+    UnexpectedRank { expected: usize, actual: usize, shape: Shape },
+}
+
+impl std::fmt::Display for ShapeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShapeError::UnexpectedRank { expected, actual, .. } => {
+                write!(f, "unexpected rank, expected: {}, actual: {}", expected, actual)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ShapeError {}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Shape(pub(crate) Vec<usize>);
@@ -47,9 +63,9 @@ impl From<&Shape> for Shape {
 
 macro_rules! get_rank {
     ($fn_name:ident, $cnt:tt, $dims:expr, $out_type:ty) => {
-        pub fn $fn_name(&self) -> Result<$out_type> {
+        pub fn $fn_name(&self) -> std::result::Result<$out_type, ShapeError> {
             if self.0.len() != $cnt {
-                Err(Error::UnexpectedRank {
+                Err(ShapeError::UnexpectedRank {
                     expected: $cnt,
                     actual: self.0.len(),
                     shape: self.clone(),

@@ -1,5 +1,6 @@
 use crate::storage::{BinaryOperation, UnaryOperation};
-use crate::{index::StridedIndex, DType, Error, Result, Shape};
+use crate::{index::StridedIndex, DType, Shape};
+use crate::storage::StorageError;
 
 #[derive(Debug, Clone)]
 pub enum CPUStorage {
@@ -21,7 +22,7 @@ impl CPUStorage {
         stride: &[usize],
         mul: f64,
         add: f64,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         match self {
             Self::F32(storage) => {
                 let index = StridedIndex::new(shape.dims(), stride);
@@ -42,7 +43,7 @@ impl CPUStorage {
         &self,
         shape: &Shape,
         stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         match self {
             Self::F32(storage) => {
                 let index = StridedIndex::new(shape.dims(), stride);
@@ -63,7 +64,7 @@ impl CPUStorage {
         shape: &Shape,
         lhs_stride: &[usize],
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         match (self, rhs) {
             (CPUStorage::F32(lhs), CPUStorage::F32(rhs)) => {
                 let lhs_index = StridedIndex::new(shape.dims(), lhs_stride);
@@ -85,7 +86,7 @@ impl CPUStorage {
 
                 Ok(Self::F64(data))
             }
-            _ => Err(Error::BinaryOperationDTypeMismatch {
+            _ => Err(StorageError::BinaryOperationDTypeMismatch {
                 lhs: self.dtype(),
                 rhs: rhs.dtype(),
                 op: T::NAME,
@@ -93,8 +94,17 @@ impl CPUStorage {
         }
     }
 
-    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> Result<Self> {
-        let (rows, cols) = shape.rank_two()?;
+    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+        let (rows, cols) = match shape.rank_two() {
+            Ok(rc) => rc,
+            Err(_) => {
+                return Err(StorageError::BinaryOperationShapeMismatch {
+                    lhs: shape.clone(),
+                    rhs: shape.clone(),
+                    op: "transpose",
+                });
+            }
+        };
         match self {
             CPUStorage::F32(storage) => {
                 let mut out = vec![0f32; rows * cols];
@@ -126,11 +136,11 @@ impl CPUStorage {
         rhs: &Self,
         rhs_shape: (usize, usize),
         rhs_stride: &[usize],
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, StorageError> {
         let (m, k) = lhs_shape;
         let (k_rhs, n) = rhs_shape;
         if k != k_rhs {
-            return Err(Error::BinaryOperationShapeMismatch {
+            return Err(StorageError::BinaryOperationShapeMismatch {
                 lhs: Shape::from((m, k)),
                 rhs: Shape::from((k_rhs, n)),
                 op: "matmul",
@@ -167,7 +177,7 @@ impl CPUStorage {
                 }
                 Ok(Self::F64(out))
             }
-            _ => Err(Error::BinaryOperationDTypeMismatch {
+            _ => Err(StorageError::BinaryOperationDTypeMismatch {
                 lhs: self.dtype(),
                 rhs: rhs.dtype(),
                 op: "matmul",
