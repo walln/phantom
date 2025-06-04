@@ -31,10 +31,7 @@ impl<'a> Iterator for StridedIndex<'a> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let storage_index = match self.next_index {
-            None => return None,
-            Some(storage_index) => storage_index,
-        };
+        let storage_index = self.next_index?;
         let mut updated = false;
         for (multi_i, max_i) in self.multi_index.iter_mut().zip(self.dims.iter()).rev() {
             let next_i = *multi_i + 1;

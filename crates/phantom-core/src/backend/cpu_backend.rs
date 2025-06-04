@@ -1,6 +1,6 @@
+use crate::storage::StorageError;
 use crate::storage::{BinaryOperation, UnaryOperation};
 use crate::{index::StridedIndex, DType, Shape};
-use crate::storage::StorageError;
 
 #[derive(Debug, Clone)]
 pub enum CPUStorage {
@@ -94,7 +94,11 @@ impl CPUStorage {
         }
     }
 
-    pub(crate) fn transpose(&self, shape: &Shape, stride: &[usize]) -> std::result::Result<Self, StorageError> {
+    pub(crate) fn transpose(
+        &self,
+        shape: &Shape,
+        stride: &[usize],
+    ) -> std::result::Result<Self, StorageError> {
         let (rows, cols) = match shape.rank_two() {
             Ok(rc) => rc,
             Err(_) => {

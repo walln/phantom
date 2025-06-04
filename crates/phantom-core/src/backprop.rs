@@ -1,6 +1,6 @@
-use crate::tensor::{Tensor, TensorID};
-use crate::{Operation};
 use crate::tensor::TensorError;
+use crate::tensor::{Tensor, TensorID};
+use crate::Operation;
 
 #[derive(Debug)]
 pub enum BackpropError {

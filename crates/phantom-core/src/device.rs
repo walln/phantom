@@ -1,6 +1,6 @@
 use crate::backend::cpu_backend::CPUStorage;
-use crate::{storage::Storage, DType, Shape};
 use crate::shape::ShapeError;
+use crate::{storage::Storage, DType, Shape};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Device {
